@@ -40,6 +40,11 @@ app.get("/api-docs.json", (req, res) => {
   res.send(swaggerSpec);
 });
 
+// Static uploads serving for local fallback
+import("./services/s3.service.js").then(({ s3Service }) => {
+  app.use("/uploads", express.static(s3Service.getUploadsDir()));
+});
+
 // API Routes
 app.use("/api/v1", apiLimiter, v1Routes);
 
@@ -51,11 +56,13 @@ async function startServer() {
   try {
     if (process.env.MONGODB_URI) {
       await connectDB();
+      console.log("Connected to mongodb ", process.env.MONGODB_URI)
     } else {
       console.warn("[Server] MONGODB_URI not provided. Running without active database connection.");
     }
 
     app.listen(PORT, () => {
+      console.log("Connected to mongodb ", PORT)
       console.log(`[Server] GRAICE Backend API listening on port ${PORT}`);
       console.log(`[Server] Health Check available at: http://localhost:${PORT}/api/v1/health`);
     });

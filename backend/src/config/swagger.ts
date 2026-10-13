@@ -33,6 +33,42 @@ const options: swaggerJsdoc.Options = {
         description: "Cryptographic password reset tokens, password updates, and credential rotation",
       },
       {
+        name: "Company Management",
+        description: "Organization onboarding, automated DNS legitimacy checks, profile management, and administrative status controls",
+      },
+      {
+        name: "User Management",
+        description: "Assessor and administrator profile management, user invitations, role assignment, and account status controls",
+      },
+      {
+        name: "Dashboard - Admin",
+        description: "Administrative operational statistics, subscription distributions, and non-confidential assessment metadata table (Screen 7 Alignment)",
+      },
+      {
+        name: "Dashboard - Auditor",
+        description: "Auditor workload metrics, 7-pillar progress bars, active assessment resumption, and assigned organizations directory (Screen 1 & 2 Alignment)",
+      },
+      {
+        name: "Assessment Analytics",
+        description: "Executive maturity summaries, pillar radar breakdown, tailored remediation recommendations, and historical trend progression",
+      },
+      {
+        name: "Reports & Exports",
+        description: "Branded PDF audit report generation, download streaming, and multi-sheet Excel (.xlsx) findings export",
+      },
+      {
+        name: "Framework Administration & Versioning",
+        description: "Admin framework configuration, question/control authoring, pillar weights, maturity thresholds, and version publishing with immutability guardrails",
+      },
+      {
+        name: "Admin User Management",
+        description: "Admin password reset initiation, profile management, and account governance",
+      },
+      {
+        name: "Audit Log Explorer",
+        description: "Filterable audit trail query endpoint with searches across actors, actions, entities, and date ranges",
+      },
+      {
         name: "System",
         description: "Health checks, database connectivity, and readiness monitoring probes",
       },
