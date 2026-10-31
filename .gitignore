@@ -55,3 +55,8 @@ GRAICE_Project_Delivery_Plan_v1.2_Client_Changes.pdf
 docs/
 doc/
 
+# Archives & Temporary Backups
+*.zip
+*.tar.gz
+
+
