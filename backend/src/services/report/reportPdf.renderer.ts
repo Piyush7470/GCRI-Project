@@ -355,12 +355,13 @@ class ReportPdfRenderer {
 
     // KPI cards
     this.ensureSpace(64);
+    const lightKpis = this.data.assessmentType === "Light";
     const kpis: [string, string, boolean?][] = [
       [String(this.data.kpis.controlsAssessed), "Controls assessed"],
       [`${this.data.kpis.completionPercentage}%`, "Completion"],
       [
         String(this.data.kpis.exceptionsNoted),
-        "Exceptions noted",
+        lightKpis ? "Governance gaps" : "Exceptions noted",
         this.data.kpis.exceptionsNoted > 0,
       ],
       [String(this.data.kpis.notYetAssessed), "Not yet assessed"],
@@ -614,16 +615,16 @@ class ReportPdfRenderer {
 
       const isLight = this.data.assessmentType === "Light";
       const headers = isLight
-        ? ["Control", "Status", "Exception", "Findings"]
+        ? ["Control", "Status", "Findings"]
         : ["Control", "Tier", "Status", "Exception", "Findings"];
       const widths = isLight
-        ? distributeWidths([12, 14, 18, 56])
+        ? distributeWidths([14, 16, 70])
         : distributeWidths([10, 8, 12, 16, 54]);
       this.drawTable(
         headers,
         controls.map((c) =>
           isLight
-            ? [c.questionId, c.testStatus, c.exceptionStatus, c.findings]
+            ? [c.questionId, c.testStatus, c.findings]
             : [
                 c.questionId,
                 c.assuranceTier,
@@ -633,7 +634,7 @@ class ReportPdfRenderer {
               ]
         ),
         widths,
-        { exceptionCol: isLight ? 2 : 3, fontSize: 8.5 }
+        { exceptionCol: isLight ? undefined : 3, fontSize: 8.5 }
       );
       this.y += 14;
     }
@@ -756,7 +757,14 @@ class ReportPdfRenderer {
     const badges: { t: string; danger: boolean }[] = [
       ...(isLight ? [] : [{ t: control.assuranceTier, danger: false }]),
       { t: control.testStatus, danger: false },
-      { t: control.exceptionStatus, danger: control.exceptionStatus === "Exception Noted" },
+      ...(isLight
+        ? []
+        : [
+            {
+              t: control.exceptionStatus,
+              danger: control.exceptionStatus === "Exception Noted",
+            },
+          ]),
     ];
 
     this.doc.font(this.font("semi")).fontSize(7.5);
@@ -1069,13 +1077,16 @@ export function validateReportConsistency(data: GraiceReportData): string[] {
       `Control detail count (${data.controls.length}) != pillar total (${pillarTotal})`
     );
   }
-  const exceptionRows = data.controls.filter(
-    (c) => c.exceptionStatus === "Exception Noted"
-  ).length;
-  if (exceptionRows !== data.gapCount) {
-    issues.push(
-      `Detailed Findings Exception Noted rows (${exceptionRows}) != gapCount (${data.gapCount})`
-    );
+  // Light has no exception workflow — do not require Exception Noted labels to match gaps.
+  if (data.assessmentType === "Full") {
+    const exceptionRows = data.controls.filter(
+      (c) => c.exceptionStatus === "Exception Noted"
+    ).length;
+    if (exceptionRows !== data.gapCount) {
+      issues.push(
+        `Detailed Findings Exception Noted rows (${exceptionRows}) != gapCount (${data.gapCount})`
+      );
+    }
   }
   return issues;
 }

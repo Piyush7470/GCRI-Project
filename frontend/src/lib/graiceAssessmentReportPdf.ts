@@ -77,32 +77,26 @@ function testStatusLabel(status?: string): string {
 function exceptionLabel(
   assessmentType: AssessmentType,
   answer: AnswerItem | undefined,
-  isGap: boolean
+  _isGap: boolean
 ): string {
+  // Light assessments have no exception workflow — never label Light rows as exceptions.
+  if (assessmentType !== "Full") return "—";
+
   const code = answer?.selectedOptionCode;
   const meaningfulCode = code && code !== "NOT_ASSESSED" ? code : undefined;
 
-  if (assessmentType === "Full") {
-    if (
-      answer?.exceptionStatus === "ExceptionNoted" ||
-      meaningfulCode === "EXCEPTION_NOTED"
-    ) {
-      return "Exception Noted";
-    }
-    if (
-      answer?.exceptionStatus === "NoExceptionNoted" ||
-      meaningfulCode === "NO_EXCEPTION_NOTED"
-    ) {
-      return "No Exception Noted";
-    }
-    return "Not Assessed";
+  if (
+    answer?.exceptionStatus === "ExceptionNoted" ||
+    meaningfulCode === "EXCEPTION_NOTED"
+  ) {
+    return "Exception Noted";
   }
-
-  if (!answer || (answer.testStatus === "NotStarted" && !meaningfulCode)) {
-    return "Not Assessed";
+  if (
+    answer?.exceptionStatus === "NoExceptionNoted" ||
+    meaningfulCode === "NO_EXCEPTION_NOTED"
+  ) {
+    return "No Exception Noted";
   }
-  if (isGap) return "Exception Noted";
-  if (meaningfulCode || answer.testStatus === "Complete") return "No Exception Noted";
   return "Not Assessed";
 }
 
@@ -425,13 +419,13 @@ async function buildAndSavePdf(
   doc.text(execLines, MARGIN, y);
   y += execLines.length * 5 + 7;
 
-  const kpiLabels = [
-    String(controlsAssessed),
-    `${completionPct}%`,
-    String(gapCount),
-    String(notYetAssessed),
-  ];
-  const kpiTitles = ["Controls assessed", "Completion", "Exceptions noted", "Not yet assessed"];
+  const isLight = summary.assessmentType === "Light";
+  const kpiLabels = isLight
+    ? [String(controlsAssessed), `${completionPct}%`, String(gapCount), String(notYetAssessed)]
+    : [String(controlsAssessed), `${completionPct}%`, String(gapCount), String(notYetAssessed)];
+  const kpiTitles = isLight
+    ? ["Controls assessed", "Completion", "Governance gaps", "Not yet assessed"]
+    : ["Controls assessed", "Completion", "Exceptions noted", "Not yet assessed"];
   const boxW = (CONTENT_W - 9) / 4;
   kpiTitles.forEach((title, i) => {
     const x = MARGIN + i * (boxW + 3);
@@ -553,14 +547,26 @@ async function buildAndSavePdf(
     doc.text(`Pillar ${pillarNum}: ${pillarName}`, MARGIN, y + 5);
     y += 11;
 
+    const lightTable = summary.assessmentType === "Light";
     autoTable(doc, {
       startY: y,
       margin: { left: MARGIN, right: MARGIN },
-      head: [["Control", "Tier", "Status", "Exception", "Findings"]],
+      head: [
+        lightTable
+          ? ["Control", "Status", "Findings"]
+          : ["Control", "Tier", "Status", "Exception", "Findings"],
+      ],
       body: pillarQs.map((pq) => {
         const ans = answerMap.get(pq.questionId);
         const finding = findingByControl.get(pq.questionId);
         const isGap = gapIds.has(pq.questionId);
+        if (lightTable) {
+          return [
+            pq.questionId,
+            testStatusLabel(ans?.testStatus),
+            findingsText(ans, pq, finding),
+          ];
+        }
         return [
           pq.questionId,
           pq.assuranceTier || "Tier 1",
@@ -585,16 +591,22 @@ async function buildAndSavePdf(
         fontStyle: "bold",
         fontSize: 9,
       },
-      columnStyles: {
-        0: { cellWidth: 20, fontStyle: "bold" },
-        1: { cellWidth: 16 },
-        2: { cellWidth: 20 },
-        3: { cellWidth: 30 },
-        4: { cellWidth: "auto" },
-      },
+      columnStyles: lightTable
+        ? {
+            0: { cellWidth: 22, fontStyle: "bold" },
+            1: { cellWidth: 24 },
+            2: { cellWidth: "auto" },
+          }
+        : {
+            0: { cellWidth: 20, fontStyle: "bold" },
+            1: { cellWidth: 16 },
+            2: { cellWidth: 20 },
+            3: { cellWidth: 30 },
+            4: { cellWidth: "auto" },
+          },
       theme: "plain",
       didParseCell: (data) => {
-        if (data.section === "body" && data.column.index === 3) {
+        if (!lightTable && data.section === "body" && data.column.index === 3) {
           const text = String(data.cell.raw);
           if (text === "Exception Noted") {
             data.cell.styles.textColor = RED;
@@ -712,6 +724,7 @@ async function buildAndSavePdf(
       const rText = recommendationText(pq, finding, rec?.recommendedAction);
       const align =
         pq.regulatoryAlignments || finding?.regulatoryAlignments || rec?.regulatoryAlignments;
+      const lightDetail = summary.assessmentType === "Light";
 
       // Start each control card with enough room for the header block
       y = ensureSpace(doc, y, 55);
@@ -723,9 +736,13 @@ async function buildAndSavePdf(
       doc.setTextColor(...NAVY);
       doc.text(pq.questionId, MARGIN + 3.5, cy);
       let badgeX = MARGIN + 3.5 + doc.getTextWidth(pq.questionId) + 4;
-      badgeX = drawPillBadge(doc, pq.assuranceTier || "Tier 1", badgeX, cy);
+      if (!lightDetail) {
+        badgeX = drawPillBadge(doc, pq.assuranceTier || "Tier 1", badgeX, cy);
+      }
       badgeX = drawPillBadge(doc, testStatusLabel(ans?.testStatus), badgeX, cy);
-      drawPillBadge(doc, exc, badgeX, cy, { danger: exc === "Exception Noted" });
+      if (!lightDetail) {
+        drawPillBadge(doc, exc, badgeX, cy, { danger: exc === "Exception Noted" });
+      }
       cy += 8;
 
       doc.setFont("helvetica", "bold");

@@ -297,7 +297,7 @@ export function AssessmentResultsView({
   );
 
   const controlsCoverage =
-    summary.totalControlsAssessed > 0
+    !isLight && summary.totalControlsAssessed > 0
       ? Math.round(
           ((summary.totalNoExceptionsNoted ?? 0) / summary.totalControlsAssessed) * 100
         )
@@ -502,17 +502,27 @@ export function AssessmentResultsView({
           label="Controls assessed"
           value={String(summary.totalControlsAssessed ?? 0)}
           hint={
-            controlsCoverage !== null
-              ? `${controlsCoverage}% without exceptions noted`
-              : `${summary.totalNoExceptionsNoted ?? 0} clear responses`
+            isLight
+              ? `${summary.totalNotAssessed ?? 0} not yet assessed`
+              : controlsCoverage !== null
+                ? `${controlsCoverage}% without exceptions noted`
+                : `${summary.totalNoExceptionsNoted ?? 0} clear responses`
           }
         />
         <KpiCard
           icon={<FileSearch className="h-4 w-4 text-rose-600" />}
           iconBg="bg-rose-50"
-          label="Exceptions & gaps"
-          value={String(summary.totalExceptionsNoted ?? 0)}
-          hint={`${gaps?.totalGapsIdentified ?? 0} governance gaps · ${summary.totalNotAssessed ?? 0} not assessed`}
+          label={isLight ? "Governance gaps" : "Exceptions & gaps"}
+          value={String(
+            isLight
+              ? gaps?.totalGapsIdentified ?? 0
+              : summary.totalExceptionsNoted ?? 0
+          )}
+          hint={
+            isLight
+              ? `${summary.totalNotAssessed ?? 0} not assessed · score-based gaps only`
+              : `${gaps?.totalGapsIdentified ?? 0} governance gaps · ${summary.totalNotAssessed ?? 0} not assessed`
+          }
         />
       </div>
 
@@ -571,8 +581,12 @@ export function AssessmentResultsView({
                     </div>
                     <div className="mt-1 flex gap-3 text-[10px] text-slate-500 font-medium">
                       <span>{p.totalControls} controls</span>
-                      <span className="text-rose-600">{p.exceptionsNoted} exceptions</span>
-                      <span className="text-emerald-600">{p.noExceptionsNoted} clear</span>
+                      {!isLight && (
+                        <>
+                          <span className="text-rose-600">{p.exceptionsNoted} exceptions</span>
+                          <span className="text-emerald-600">{p.noExceptionsNoted} clear</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -589,8 +603,12 @@ export function AssessmentResultsView({
                     <th className="px-4 py-3 text-right">Earned</th>
                     <th className="px-4 py-3 text-right">Max</th>
                     <th className="px-4 py-3 text-right">Score</th>
-                    <th className="px-4 py-3 text-right">Exceptions</th>
-                    <th className="px-4 py-3 text-right">No exc.</th>
+                    {!isLight && (
+                      <>
+                        <th className="px-4 py-3 text-right">Exceptions</th>
+                        <th className="px-4 py-3 text-right">No exc.</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -608,12 +626,16 @@ export function AssessmentResultsView({
                       <td className="px-4 py-3 text-right tabular-nums font-bold text-indigo-700">
                         {p.percentage}%
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-rose-600">
-                        {p.exceptionsNoted}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-emerald-700">
-                        {p.noExceptionsNoted}
-                      </td>
+                      {!isLight && (
+                        <>
+                          <td className="px-4 py-3 text-right tabular-nums text-rose-600">
+                            {p.exceptionsNoted}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-emerald-700">
+                            {p.noExceptionsNoted}
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -668,7 +690,7 @@ export function AssessmentResultsView({
                         {g.questionId}
                       </span>
                       <span className="text-[10px] font-semibold text-slate-500">{g.pillarName}</span>
-                      {g.exceptionStatus && (
+                      {!isLight && g.exceptionStatus && (
                         <span className="text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
                           {g.exceptionStatus}
                         </span>

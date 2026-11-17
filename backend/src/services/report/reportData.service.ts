@@ -49,8 +49,11 @@ function testStatusLabel(status?: string): string {
 function exceptionStatusLabel(
   assessmentType: "Light" | "Full",
   answer: IAnswer | undefined,
-  isGap: boolean
+  _isGap: boolean
 ): string {
+  // Light assessments have no exception workflow — keep report labels empty/neutral.
+  if (assessmentType !== "Full") return "—";
+
   const meaningfulCode =
     answer?.selectedOptionCode && answer.selectedOptionCode !== "NOT_ASSESSED"
       ? answer.selectedOptionCode
@@ -59,23 +62,16 @@ function exceptionStatusLabel(
   if (!answer || (answer.testStatus === "NotStarted" && !meaningfulCode)) {
     return "Not Assessed";
   }
-  if (assessmentType === "Full") {
-    if (
-      answer.exceptionStatus === "ExceptionNoted" ||
-      meaningfulCode === "EXCEPTION_NOTED"
-    ) {
-      return "Exception Noted";
-    }
-    if (
-      answer.exceptionStatus === "NoExceptionNoted" ||
-      meaningfulCode === "NO_EXCEPTION_NOTED"
-    ) {
-      return "No Exception Noted";
-    }
-    return "Not Assessed";
+  if (
+    answer.exceptionStatus === "ExceptionNoted" ||
+    meaningfulCode === "EXCEPTION_NOTED"
+  ) {
+    return "Exception Noted";
   }
-  if (isGap) return "Exception Noted";
-  if (meaningfulCode || answer.testStatus === "Complete") {
+  if (
+    answer.exceptionStatus === "NoExceptionNoted" ||
+    meaningfulCode === "NO_EXCEPTION_NOTED"
+  ) {
     return "No Exception Noted";
   }
   return "Not Assessed";
@@ -320,15 +316,22 @@ function executiveNarrative(
     data.kpis.maxPossibleScore
       ? ` The organization scored ${data.kpis.overallScore} of ${data.kpis.maxPossibleScore} available points`
       : "";
+  const cleanClose =
+    data.assessmentType === "Light"
+      ? data.gapCount > 0
+        ? `, with ${data.gapCount} score-based governance gap${data.gapCount === 1 ? "" : "s"} requiring attention.`
+        : ", with no score-based governance gaps identified in the assessed control set."
+      : data.gapCount > 0
+        ? `, with ${data.gapCount} control gap${data.gapCount === 1 ? "" : "s"} requiring remediation attention.`
+        : ", with no governance exceptions identified in the assessed control set.";
+
   return (
     `This ${typeWord} assessment provides a focused, evidence-based snapshot of responsible AI governance ` +
     `maturity for ${data.organizationName} against the GRAICE control framework.${scorePhrase} ` +
     `Overall scored maturity is classified as ${maturity}` +
     (pct !== undefined ? ` (compliance index ${pct}%).` : ".") +
     ` Results are intended to inform leadership investment priorities and next-step assurance planning` +
-    (data.gapCount > 0
-      ? `, with ${data.gapCount} control gap${data.gapCount === 1 ? "" : "s"} requiring remediation attention.`
-      : ", with no governance exceptions identified in the assessed control set.")
+    cleanClose
   );
 }
 
@@ -366,13 +369,16 @@ function findingsForControl(
   answer: IAnswer | undefined,
   _question: IQuestionControl,
   isGap: boolean,
-  gapNotes?: string
+  gapNotes?: string,
+  assessmentType: "Light" | "Full" = "Full"
 ): string {
   if (answer?.evidenceNotes?.trim()) return answer.evidenceNotes.trim();
   if (gapNotes?.trim()) return gapNotes.trim();
   // Never substitute the control question/description as if it were an auditor observation.
   if (isGap) {
-    return "Exception noted — no auditor observations recorded.";
+    return assessmentType === "Light"
+      ? "Score gap identified — no auditor observations recorded."
+      : "Exception noted — no auditor observations recorded.";
   }
   if (answer && (answer.testStatus === "Complete" || answer.selectedOptionCode)) {
     return "No auditor observations recorded.";
@@ -382,10 +388,17 @@ function findingsForControl(
 
 function recommendationForControl(
   question: IQuestionControl,
-  isGap: boolean
+  isGap: boolean,
+  assessmentType: "Light" | "Full" = "Full"
 ): string {
   if (!isGap) return "No action required.";
   if (question.remediationGuidance?.trim()) return question.remediationGuidance.trim();
+  if (assessmentType === "Light") {
+    return (
+      `Strengthen documented controls for ${question.questionId} (${question.pillarName}) ` +
+      `to close the identified score gap.`
+    );
+  }
   return (
     `Formalize policy documentation and implement continuous operational controls for ` +
     `${question.questionId} (${question.pillarName}) to remediate the noted audit exception.`
@@ -496,8 +509,14 @@ export function buildGraiceReportData(input: {
       evidenceReference: ans?.evidenceAttachmentUrl
         ? "Evidence attachment recorded (access via authorized assessment workspace)"
         : undefined,
-      findings: findingsForControl(ans, q, isGap, gap?.evidenceNotes),
-      recommendation: recommendationForControl(q, isGap),
+      findings: findingsForControl(
+        ans,
+        q,
+        isGap,
+        gap?.evidenceNotes,
+        session.assessmentType
+      ),
+      recommendation: recommendationForControl(q, isGap, session.assessmentType),
       priority,
       regulatoryAlignments: q.regulatoryAlignments || gap?.regulatoryAlignments,
     };
@@ -510,17 +529,24 @@ export function buildGraiceReportData(input: {
       controlId: g.questionId,
       pillarName: g.pillarName,
       pillarNumber: q?.pillarNumber || 0,
-      finding: g.evidenceNotes?.trim() || "Exception noted — no auditor observations recorded.",
+      finding:
+        g.evidenceNotes?.trim() ||
+        (session.assessmentType === "Light"
+          ? "Score gap identified — no auditor observations recorded."
+          : "Exception noted — no auditor observations recorded."),
       priority: g.scoreValue === 0 ? "High" : "Medium",
-      recommendedAction: control?.recommendation || recommendationForControl(
-        q ||
-          ({
-            questionId: g.questionId,
-            pillarName: g.pillarName,
-            remediationGuidance: undefined,
-          } as IQuestionControl),
-        true
-      ),
+      recommendedAction:
+        control?.recommendation ||
+        recommendationForControl(
+          q ||
+            ({
+              questionId: g.questionId,
+              pillarName: g.pillarName,
+              remediationGuidance: undefined,
+            } as IQuestionControl),
+          true,
+          session.assessmentType
+        ),
       regulatoryAlignments: g.regulatoryAlignments,
     };
   });
