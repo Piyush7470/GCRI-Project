@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { assessmentService } from "@/services/assessment.service";
 import {
+  AssessmentDetailResponse,
   AssessmentGapsResponse,
   AssessmentPillarsResponse,
   AssessmentRecommendationsResponse,
@@ -33,6 +34,7 @@ function AssessmentResultsContent() {
   const [gaps, setGaps] = useState<AssessmentGapsResponse | null>(null);
   const [recommendations, setRecommendations] =
     useState<AssessmentRecommendationsResponse | null>(null);
+  const [detail, setDetail] = useState<AssessmentDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [partialWarning, setPartialWarning] = useState<string | null>(null);
@@ -43,12 +45,14 @@ function AssessmentResultsContent() {
     setError(null);
     setPartialWarning(null);
     try {
-      const [sumResult, pilResult, gapResult, recResult] = await Promise.allSettled([
-        assessmentService.getSummary(assessmentId),
-        assessmentService.getPillars(assessmentId),
-        assessmentService.getGaps(assessmentId),
-        assessmentService.getRecommendations(assessmentId),
-      ]);
+      const [sumResult, pilResult, gapResult, recResult, detailResult] =
+        await Promise.allSettled([
+          assessmentService.getSummary(assessmentId),
+          assessmentService.getPillars(assessmentId),
+          assessmentService.getGaps(assessmentId),
+          assessmentService.getRecommendations(assessmentId),
+          assessmentService.getAssessmentById(assessmentId),
+        ]);
 
       const warnings: string[] = [];
 
@@ -83,6 +87,13 @@ function AssessmentResultsContent() {
       } else {
         setRecommendations(null);
         warnings.push("Recommendations could not be loaded.");
+      }
+
+      if (detailResult.status === "fulfilled" && detailResult.value?.data) {
+        setDetail(detailResult.value.data as AssessmentDetailResponse);
+      } else {
+        setDetail(null);
+        warnings.push("Question and answer detail could not be loaded.");
       }
 
       if (warnings.length) setPartialWarning(warnings.join(" "));
@@ -138,6 +149,7 @@ function AssessmentResultsContent() {
         pillars={pillars}
         gaps={gaps}
         recommendations={recommendations}
+        detail={detail}
         onRefresh={load}
       />
     </div>

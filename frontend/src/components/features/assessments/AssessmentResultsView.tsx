@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  AssessmentDetailResponse,
   AssessmentGapsResponse,
   AssessmentPillarsResponse,
   AssessmentRecommendationsResponse,
@@ -259,7 +260,38 @@ export interface AssessmentResultsViewProps {
   pillars: AssessmentPillarsResponse | null;
   gaps: AssessmentGapsResponse | null;
   recommendations: AssessmentRecommendationsResponse | null;
+  detail: AssessmentDetailResponse | null;
   onRefresh: () => void;
+}
+
+function resolveSelectedAnswerLabel(
+  question: {
+    responseOptions?: { code: string; label: string }[];
+  },
+  answer:
+    | {
+        selectedOptionCode?: string;
+        exceptionStatus?: string;
+        testStatus?: string;
+      }
+    | undefined,
+  assessmentType: string
+): string {
+  const code = answer?.selectedOptionCode?.trim();
+  if (code && code !== "NOT_ASSESSED") {
+    const opt = question.responseOptions?.find((o) => o.code === code);
+    if (opt?.label?.trim()) return opt.label.trim();
+    if (code === "EXCEPTION_NOTED") return "Exception Noted";
+    if (code === "NO_EXCEPTION_NOTED") return "No Exception Noted";
+    return code.replace(/_/g, " ");
+  }
+  if (assessmentType === "Full") {
+    if (answer?.exceptionStatus === "ExceptionNoted") return "Exception Noted";
+    if (answer?.exceptionStatus === "NoExceptionNoted") return "No Exception Noted";
+  }
+  if (answer?.testStatus === "Complete") return "Answer recorded";
+  if (answer?.testStatus === "InProgress") return "In progress — not finalized";
+  return "Not answered";
 }
 
 export function AssessmentResultsView({
@@ -268,6 +300,7 @@ export function AssessmentResultsView({
   pillars,
   gaps,
   recommendations,
+  detail,
   onRefresh,
 }: AssessmentResultsViewProps) {
   const [radarHover, setRadarHover] = useState<number | null>(null);
@@ -302,6 +335,75 @@ export function AssessmentResultsView({
           ((summary.totalNoExceptionsNoted ?? 0) / summary.totalControlsAssessed) * 100
         )
       : null;
+
+  const qaByPillar = useMemo(() => {
+    const questions = (detail?.framework?.questions || []).filter(
+      (q) =>
+        q.isActive !== false &&
+        q.pillarNumber !== 0 &&
+        q.pillarId !== "ai-landscape"
+    );
+    const answerMap = new Map(
+      (detail?.session?.answers || []).map((a) => [a.questionId, a])
+    );
+    const groups = new Map<
+      number,
+      {
+        pillarNumber: number;
+        pillarName: string;
+        items: {
+          questionId: string;
+          questionText: string;
+          answerLabel: string;
+          testStatus: string;
+          exceptionLabel?: string;
+          scoreValue?: number;
+        }[];
+      }
+    >();
+
+    for (const q of questions) {
+      const ans = answerMap.get(q.questionId);
+      const pillarNumber = q.pillarNumber ?? 0;
+      const existing = groups.get(pillarNumber) || {
+        pillarNumber,
+        pillarName: q.pillarName,
+        items: [],
+      };
+      let exceptionLabel: string | undefined;
+      if (!isLight) {
+        if (
+          ans?.exceptionStatus === "ExceptionNoted" ||
+          ans?.selectedOptionCode === "EXCEPTION_NOTED"
+        ) {
+          exceptionLabel = "Exception Noted";
+        } else if (
+          ans?.exceptionStatus === "NoExceptionNoted" ||
+          ans?.selectedOptionCode === "NO_EXCEPTION_NOTED"
+        ) {
+          exceptionLabel = "No Exception Noted";
+        } else {
+          exceptionLabel = "Not Assessed";
+        }
+      }
+      existing.items.push({
+        questionId: q.questionId,
+        questionText: q.text,
+        answerLabel: resolveSelectedAnswerLabel(q, ans, summary.assessmentType),
+        testStatus: ans?.testStatus || "NotStarted",
+        exceptionLabel,
+        scoreValue: typeof ans?.scoreValue === "number" ? ans.scoreValue : undefined,
+      });
+      groups.set(pillarNumber, existing);
+    }
+
+    return [...groups.values()]
+      .sort((a, b) => a.pillarNumber - b.pillarNumber)
+      .map((g) => ({
+        ...g,
+        items: g.items.sort((a, b) => a.questionId.localeCompare(b.questionId)),
+      }));
+  }, [detail, isLight, summary.assessmentType]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-14">
@@ -766,6 +868,91 @@ export function AssessmentResultsView({
           </section>
         )}
       </div>
+
+      {/* Pillar-wise questions & answers */}
+      {qaByPillar.length > 0 && (
+        <section className="surface-panel rounded-3xl p-6 sm:p-8 space-y-6">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <ClipboardCheck className="h-5 w-5 text-indigo-600" />
+              Questions & answers by pillar
+            </h2>
+            <p className="text-sm text-slate-500 mt-1 max-w-2xl">
+              Full response record for this assessment
+              {isLight ? " (lite — no exception workflow)." : ", including exception status."}
+            </p>
+          </div>
+
+          <div className="space-y-6">
+            {qaByPillar.map((group) => (
+              <div key={group.pillarNumber} className="space-y-3">
+                <h3 className="text-sm font-bold text-teal-800 tracking-tight">
+                  Pillar {group.pillarNumber}: {group.pillarName}
+                </h3>
+                <div className="overflow-hidden rounded-2xl border border-slate-200/80">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50/90 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          <th className="px-4 py-3">Control</th>
+                          <th className="px-4 py-3">Question</th>
+                          <th className="px-4 py-3">Answer</th>
+                          <th className="px-4 py-3">Status</th>
+                          {!isLight && <th className="px-4 py-3">Exception</th>}
+                          <th className="px-4 py-3 text-right">Pts</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.items.map((item, i) => (
+                          <tr
+                            key={item.questionId}
+                            className={cn(
+                              "border-t border-slate-100 align-top",
+                              i % 2 === 0 ? "bg-white" : "bg-slate-50/40"
+                            )}
+                          >
+                            <td className="px-4 py-3 font-semibold text-indigo-700 whitespace-nowrap">
+                              {item.questionId}
+                            </td>
+                            <td className="px-4 py-3 text-slate-700 max-w-md leading-snug">
+                              {item.questionText}
+                            </td>
+                            <td className="px-4 py-3 font-medium text-slate-900 max-w-xs leading-snug">
+                              {item.answerLabel}
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
+                              {item.testStatus === "Complete"
+                                ? "Complete"
+                                : item.testStatus === "InProgress"
+                                  ? "In-Progress"
+                                  : "Not Started"}
+                            </td>
+                            {!isLight && (
+                              <td
+                                className={cn(
+                                  "px-4 py-3 whitespace-nowrap font-semibold",
+                                  item.exceptionLabel === "Exception Noted"
+                                    ? "text-rose-600"
+                                    : "text-slate-600"
+                                )}
+                              >
+                                {item.exceptionLabel}
+                              </td>
+                            )}
+                            <td className="px-4 py-3 text-right tabular-nums text-slate-700">
+                              {typeof item.scoreValue === "number" ? item.scoreValue : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">

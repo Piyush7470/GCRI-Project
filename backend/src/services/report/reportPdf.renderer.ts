@@ -390,22 +390,40 @@ class ReportPdfRenderer {
 
     this.drawScoreSummaryStrip();
 
-    // Status by Pillar
-    this.sectionHeading("Status by Pillar");
-    const pillarRows = this.data.pillarProgress.map((p) => [
-      p.pillarName,
-      String(p.notStarted),
-      String(p.inProgress),
-      String(p.complete),
-      String(p.total),
-      `${p.completionPercentage}%`,
-    ]);
-    this.drawTable(
-      ["Pillar", "Not Started", "In-Progress", "Complete", "Total", "Completion"],
-      pillarRows,
-      distributeWidths([34, 11, 11, 11, 9, 12]),
-      { numericAlignFrom: 1 }
-    );
+    // Pillar-wise scores + status
+    const isLight = this.data.assessmentType === "Light";
+    this.sectionHeading("Pillar Scores");
+    if (isLight) {
+      this.drawTable(
+        ["Pillar", "Score", "Max", "%", "Complete", "Total", "Completion"],
+        this.data.pillarProgress.map((p) => [
+          p.pillarName,
+          String(p.scoreEarned ?? 0),
+          String(p.scoreMax ?? 0),
+          `${p.scorePercentage ?? 0}%`,
+          String(p.complete),
+          String(p.total),
+          `${p.completionPercentage}%`,
+        ]),
+        distributeWidths([28, 10, 10, 10, 12, 10, 14]),
+        { numericAlignFrom: 1 }
+      );
+    } else {
+      this.drawTable(
+        ["Pillar", "Score", "Max", "%", "Complete", "Exceptions", "Total"],
+        this.data.pillarProgress.map((p) => [
+          p.pillarName,
+          String(p.scoreEarned ?? 0),
+          String(p.scoreMax ?? 0),
+          `${p.scorePercentage ?? 0}%`,
+          String(p.complete),
+          String(p.exceptionsNoted ?? 0),
+          String(p.total),
+        ]),
+        distributeWidths([28, 9, 9, 9, 12, 14, 11]),
+        { numericAlignFrom: 1, exceptionCol: 5 }
+      );
+    }
     this.y += 14;
 
     // Why Invest — keep with executive content when possible
@@ -615,26 +633,31 @@ class ReportPdfRenderer {
 
       const isLight = this.data.assessmentType === "Light";
       const headers = isLight
-        ? ["Control", "Status", "Findings"]
-        : ["Control", "Tier", "Status", "Exception", "Findings"];
+        ? ["Control", "Question", "Answer", "Status", "Pts"]
+        : ["Control", "Question", "Answer", "Status", "Exception", "Pts"];
       const widths = isLight
-        ? distributeWidths([14, 16, 70])
-        : distributeWidths([10, 8, 12, 16, 54]);
+        ? distributeWidths([10, 38, 28, 14, 10])
+        : distributeWidths([9, 30, 22, 11, 16, 8]);
       this.drawTable(
         headers,
-        controls.map((c) =>
-          isLight
-            ? [c.questionId, c.testStatus, c.findings]
-            : [
-                c.questionId,
-                c.assuranceTier,
-                c.testStatus,
-                c.exceptionStatus,
-                c.findings,
-              ]
-        ),
+        controls.map((c) => {
+          const pts =
+            typeof c.scoreValue === "number" ? String(c.scoreValue) : "—";
+          const answer = c.selectedAnswerLabel || "Not answered";
+          if (isLight) {
+            return [c.questionId, c.questionText, answer, c.testStatus, pts];
+          }
+          return [
+            c.questionId,
+            c.questionText,
+            answer,
+            c.testStatus,
+            c.exceptionStatus,
+            pts,
+          ];
+        }),
         widths,
-        { exceptionCol: isLight ? undefined : 3, fontSize: 8.5 }
+        { exceptionCol: isLight ? undefined : 4, fontSize: 8 }
       );
       this.y += 14;
     }
@@ -711,7 +734,9 @@ class ReportPdfRenderer {
     let h = 48;
     h +=
       this.doc.heightOfString(control.questionText, { width: innerW, lineGap: 1 }) + 12;
+    const answerLine = control.selectedAnswerLabel || "Not answered";
     this.doc.font(this.font("reg")).fontSize(9.5);
+    h += 14 + this.doc.heightOfString(answerLine, { width: innerW, lineGap: 1 }) + 8;
     if (control.controlDescription?.trim()) {
       h += 14 + this.doc.heightOfString(control.controlDescription.trim(), { width: innerW }) + 6;
     }
@@ -829,6 +854,34 @@ class ReportPdfRenderer {
         width: cardW - 20,
         lineGap: 1,
       }) + 8;
+
+    // Selected answer (always shown)
+    {
+      const answerLine = control.selectedAnswerLabel || "Not answered";
+      const pts =
+        typeof control.scoreValue === "number"
+          ? ` · ${control.scoreValue} pt${control.scoreValue === 1 ? "" : "s"}`
+          : "";
+      this.doc
+        .fillColor(C.secondary)
+        .font(this.font("semi"))
+        .fontSize(8)
+        .text("SELECTED ANSWER", cardX + 10, this.y);
+      this.y += 11;
+      this.doc
+        .fillColor(C.text)
+        .font(this.font("reg"))
+        .fontSize(9.5)
+        .text(`${answerLine}${pts}`, cardX + 10, this.y, {
+          width: cardW - 20,
+          lineGap: 1,
+        });
+      this.y +=
+        this.doc.heightOfString(`${answerLine}${pts}`, {
+          width: cardW - 20,
+          lineGap: 1,
+        }) + 8;
+    }
 
     const softBreak = (need: number) => {
       if (this.y + need > CONTENT_BOTTOM) {

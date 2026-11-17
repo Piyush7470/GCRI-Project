@@ -46,6 +46,30 @@ function testStatusLabel(status?: string): string {
   return status || "Not Started";
 }
 
+function selectedAnswerLabel(
+  question: IQuestionControl,
+  answer: IAnswer | undefined,
+  assessmentType: "Light" | "Full"
+): string {
+  const code = answer?.selectedOptionCode?.trim();
+  if (code && code !== "NOT_ASSESSED") {
+    const opt = question.responseOptions?.find((o) => o.code === code);
+    if (opt?.label?.trim()) return opt.label.trim();
+    if (code === "EXCEPTION_NOTED") return "Exception Noted";
+    if (code === "NO_EXCEPTION_NOTED") return "No Exception Noted";
+    return code.replace(/_/g, " ");
+  }
+
+  if (assessmentType === "Full") {
+    if (answer?.exceptionStatus === "ExceptionNoted") return "Exception Noted";
+    if (answer?.exceptionStatus === "NoExceptionNoted") return "No Exception Noted";
+  }
+
+  if (answer?.testStatus === "Complete") return "Answer recorded";
+  if (answer?.testStatus === "InProgress") return "In progress — not finalized";
+  return "Not answered";
+}
+
 function exceptionStatusLabel(
   assessmentType: "Light" | "Full",
   answer: IAnswer | undefined,
@@ -107,6 +131,11 @@ export function buildPillarProgress(
 ): ReportPillarProgress[] {
   const answerMap = new Map(session.answers.map((a) => [a.questionId, a]));
   const activeQuestions = framework.questions.filter((q) => q.isActive !== false);
+  const snapshot =
+    session.scoreSnapshot || ScoringService.calculateScores(session, framework);
+  const scoreByPillar = new Map(
+    (snapshot.pillarScores || []).map((ps) => [ps.pillarId, ps])
+  );
 
   const sectionsToTrack =
     session.assessmentType === "Light"
@@ -137,7 +166,9 @@ export function buildPillarProgress(
     .filter((p) => p.pillarNumber !== 0 && p.pillarId !== "ai-landscape")
     .map((p) => {
       const questions = activeQuestions.filter(
-        (q) => q.pillarId === p.pillarId || q.pillarNumber === p.pillarNumber
+        (q) =>
+          !isLandscapeQuestion(q) &&
+          (q.pillarId === p.pillarId || q.pillarNumber === p.pillarNumber)
       );
       let complete = 0;
       let inProgress = 0;
@@ -198,24 +229,25 @@ export function buildPillarProgress(
           inProgress++;
         } else {
           complete++;
-          if (
-            a.exceptionStatus === "ExceptionNoted" ||
-            meaningfulCode === "EXCEPTION_NOTED"
-          ) {
-            exceptionsNoted++;
-          }
-          if (
-            a.exceptionStatus === "NoExceptionNoted" ||
-            meaningfulCode === "NO_EXCEPTION_NOTED"
-          ) {
-            noExceptions++;
-          }
         }
       }
 
       const total = questions.length;
       const completionPercentage =
         total > 0 ? Math.round((complete / total) * 100 * 10) / 10 : 0;
+      const pillarScore =
+        scoreByPillar.get(p.pillarId) ||
+        snapshot.pillarScores?.find(
+          (ps) =>
+            ps.pillarNumber === p.pillarNumber || ps.pillarName === p.name
+        );
+      const scoreEarned = pillarScore?.scoreEarned ?? 0;
+      const scoreMax = pillarScore?.scoreMax ?? 0;
+      const scorePercentage =
+        pillarScore?.percentage ??
+        (scoreMax > 0
+          ? Math.round((scoreEarned / scoreMax) * 1000) / 10
+          : 0);
 
       return {
         pillarId: p.pillarId,
@@ -225,9 +257,12 @@ export function buildPillarProgress(
         complete,
         inProgress,
         notStarted,
-        exceptionsNoted,
-        noExceptions,
+        exceptionsNoted: session.assessmentType === "Full" ? exceptionsNoted : 0,
+        noExceptions: session.assessmentType === "Full" ? noExceptions : 0,
         completionPercentage,
+        scoreEarned,
+        scoreMax,
+        scorePercentage,
       };
     });
 }
@@ -497,6 +532,9 @@ export function buildGraiceReportData(input: {
       exceptionStatus: exceptionStatusLabel(session.assessmentType, ans, isGap),
       isGap,
       questionText: q.text,
+      selectedAnswerLabel: selectedAnswerLabel(q, ans, session.assessmentType),
+      selectedOptionCode: ans?.selectedOptionCode,
+      scoreValue: typeof ans?.scoreValue === "number" ? ans.scoreValue : undefined,
       controlDescription: q.controlDescription,
       testProcedure: q.testProcedure,
       testProcedureSteps: parseProcedureSteps(q.testProcedure),

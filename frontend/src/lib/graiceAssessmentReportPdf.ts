@@ -6,6 +6,7 @@ import type {
   AssessmentDetailResponse,
   AssessmentFindingsResponse,
   AssessmentPillarProgressItem,
+  AssessmentPillarsResponse,
   AssessmentProgressResponse,
   AssessmentRecommendationsResponse,
   AssessmentSummaryResponse,
@@ -110,6 +111,28 @@ function findingsText(
   if (finding?.recommendedAction) return finding.recommendedAction;
   if (question.controlDescription?.trim()) return question.controlDescription.trim();
   return question.text;
+}
+
+function selectedAnswerLabel(
+  question: FrameworkQuestion,
+  answer: AnswerItem | undefined,
+  assessmentType: AssessmentType
+): string {
+  const code = answer?.selectedOptionCode?.trim();
+  if (code && code !== "NOT_ASSESSED") {
+    const opt = question.responseOptions?.find((o) => o.code === code);
+    if (opt?.label?.trim()) return opt.label.trim();
+    if (code === "EXCEPTION_NOTED") return "Exception Noted";
+    if (code === "NO_EXCEPTION_NOTED") return "No Exception Noted";
+    return code.replace(/_/g, " ");
+  }
+  if (assessmentType === "Full") {
+    if (answer?.exceptionStatus === "ExceptionNoted") return "Exception Noted";
+    if (answer?.exceptionStatus === "NoExceptionNoted") return "No Exception Noted";
+  }
+  if (answer?.testStatus === "Complete") return "Answer recorded";
+  if (answer?.testStatus === "InProgress") return "In progress — not finalized";
+  return "Not answered";
 }
 
 function recommendationText(
@@ -277,13 +300,15 @@ function buildPillarRows(
 }
 
 export async function downloadGraiceBrandedAssessmentPdf(assessmentId: string): Promise<void> {
-  const [summaryRes, progressRes, detailRes, findingsRes, recsRes] = await Promise.all([
-    assessmentService.getSummary(assessmentId),
-    assessmentService.getProgress(assessmentId),
-    assessmentService.getAssessmentById(assessmentId),
-    assessmentService.getFindings(assessmentId),
-    assessmentService.getRecommendations(assessmentId),
-  ]);
+  const [summaryRes, progressRes, detailRes, findingsRes, recsRes, pillarsRes] =
+    await Promise.all([
+      assessmentService.getSummary(assessmentId),
+      assessmentService.getProgress(assessmentId),
+      assessmentService.getAssessmentById(assessmentId),
+      assessmentService.getFindings(assessmentId),
+      assessmentService.getRecommendations(assessmentId),
+      assessmentService.getPillars(assessmentId),
+    ]);
 
   await buildAndSavePdf(
     assessmentId,
@@ -291,7 +316,8 @@ export async function downloadGraiceBrandedAssessmentPdf(assessmentId: string): 
     progressRes.data,
     detailRes.data as AssessmentDetailResponse,
     findingsRes.data as AssessmentFindingsResponse,
-    recsRes.data as AssessmentRecommendationsResponse
+    recsRes.data as AssessmentRecommendationsResponse,
+    pillarsRes.data as AssessmentPillarsResponse
   );
 }
 
@@ -301,7 +327,8 @@ async function buildAndSavePdf(
   progress: AssessmentProgressResponse,
   detail: AssessmentDetailResponse,
   findings: AssessmentFindingsResponse,
-  recommendations: AssessmentRecommendationsResponse
+  recommendations: AssessmentRecommendationsResponse,
+  pillarsData: AssessmentPillarsResponse
 ): Promise<void> {
   const [gcraiLogo, graiceLogo] = await Promise.all([
     loadImageDataUrl("/report/gcrai-logo.png"),
@@ -318,12 +345,21 @@ async function buildAndSavePdf(
   const recByControl = new Map(recommendations.recommendations.map((r) => [r.questionId, r]));
   const gapIds = new Set(findings.findings.map((f) => f.controlId));
 
-  // Also treat Full-assessment ExceptionNoted answers as gaps for completeness
-  session.answers.forEach((a) => {
-    if (a.exceptionStatus === "ExceptionNoted" || a.selectedOptionCode === "EXCEPTION_NOTED") {
-      gapIds.add(a.questionId);
-    }
-  });
+  // Full only: ExceptionNoted answers count as gaps. Light never surfaces exceptions.
+  if (summary.assessmentType === "Full") {
+    session.answers.forEach((a) => {
+      if (
+        a.exceptionStatus === "ExceptionNoted" ||
+        a.selectedOptionCode === "EXCEPTION_NOTED"
+      ) {
+        gapIds.add(a.questionId);
+      }
+    });
+  }
+
+  const scoreByPillar = new Map(
+    (pillarsData?.pillars || []).map((p) => [p.pillarId, p])
+  );
 
   const org = orgName(summary);
   const systemLine =
@@ -444,24 +480,51 @@ async function buildAndSavePdf(
   });
   y += 30;
 
-  // Status by Pillar — all pillars
+  // Pillar scores — all pillars (exceptions column Full only)
   y = ensureSpace(doc, y, 55);
-  y = drawSectionTitle(doc, "Status by Pillar", y);
+  y = drawSectionTitle(doc, "Pillar Scores", y);
   autoTable(doc, {
     startY: y,
     margin: { left: MARGIN, right: MARGIN },
-    head: [["Pillar", "Not Started", "In-Progress", "Complete", "Total", "Completion"]],
-    body: pillarRows.map((p) => [
-      p.pillarName,
-      String(p.notStarted ?? 0),
-      String(p.inProgress ?? 0),
-      String(p.complete ?? 0),
-      String(p.total ?? 0),
-      `${Math.round(p.completionPercentage ?? 0)}%`,
-    ]),
+    head: [
+      isLight
+        ? ["Pillar", "Score", "Max", "%", "Complete", "Total", "Completion"]
+        : ["Pillar", "Score", "Max", "%", "Complete", "Exceptions", "Total"],
+    ],
+    body: pillarRows.map((p) => {
+      const score =
+        scoreByPillar.get(p.pillarId) ||
+        pillarsData?.pillars?.find(
+          (ps) =>
+            ps.pillarNumber === p.pillarNumber || ps.pillarName === p.pillarName
+        );
+      const earned = score?.scoreEarned ?? 0;
+      const max = score?.scoreMax ?? 0;
+      const pct = score?.percentage ?? 0;
+      if (isLight) {
+        return [
+          p.pillarName,
+          String(earned),
+          String(max),
+          `${pct}%`,
+          String(p.complete ?? 0),
+          String(p.total ?? 0),
+          `${Math.round(p.completionPercentage ?? 0)}%`,
+        ];
+      }
+      return [
+        p.pillarName,
+        String(earned),
+        String(max),
+        `${pct}%`,
+        String(p.complete ?? 0),
+        String(p.exceptionsNoted ?? 0),
+        String(p.total ?? 0),
+      ];
+    }),
     styles: {
-      fontSize: 9.5,
-      cellPadding: 3.2,
+      fontSize: 9,
+      cellPadding: 3,
       textColor: BODY,
       lineColor: [203, 213, 225],
       lineWidth: 0.25,
@@ -471,7 +534,7 @@ async function buildAndSavePdf(
       fillColor: HEADER_BG,
       textColor: NAVY,
       fontStyle: "bold",
-      fontSize: 9.5,
+      fontSize: 9,
     },
     alternateRowStyles: { fillColor: ROW_ALT },
     theme: "grid",
@@ -553,30 +616,35 @@ async function buildAndSavePdf(
       margin: { left: MARGIN, right: MARGIN },
       head: [
         lightTable
-          ? ["Control", "Status", "Findings"]
-          : ["Control", "Tier", "Status", "Exception", "Findings"],
+          ? ["Control", "Question", "Answer", "Status", "Pts"]
+          : ["Control", "Question", "Answer", "Status", "Exception", "Pts"],
       ],
       body: pillarQs.map((pq) => {
         const ans = answerMap.get(pq.questionId);
-        const finding = findingByControl.get(pq.questionId);
         const isGap = gapIds.has(pq.questionId);
+        const answer = selectedAnswerLabel(pq, ans, summary.assessmentType);
+        const pts =
+          typeof ans?.scoreValue === "number" ? String(ans.scoreValue) : "—";
         if (lightTable) {
           return [
             pq.questionId,
+            pq.text,
+            answer,
             testStatusLabel(ans?.testStatus),
-            findingsText(ans, pq, finding),
+            pts,
           ];
         }
         return [
           pq.questionId,
-          pq.assuranceTier || "Tier 1",
+          pq.text,
+          answer,
           testStatusLabel(ans?.testStatus),
           exceptionLabel(summary.assessmentType, ans, isGap),
-          findingsText(ans, pq, finding),
+          pts,
         ];
       }),
       styles: {
-        fontSize: 8.5,
+        fontSize: 8,
         cellPadding: 2.8,
         overflow: "linebreak",
         valign: "top",
@@ -752,6 +820,24 @@ async function buildAndSavePdf(
       doc.text(qLines, MARGIN + 3.5, cy);
       cy += qLines.length * 4.8 + 4;
 
+      const answerLabel = selectedAnswerLabel(pq, ans, summary.assessmentType);
+      const ptsSuffix =
+        typeof ans?.scoreValue === "number"
+          ? ` · ${ans.scoreValue} pt${ans.scoreValue === 1 ? "" : "s"}`
+          : "";
+      cy = ensureSpace(doc, cy, 14);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(...MUTED);
+      doc.text("SELECTED ANSWER", MARGIN + 3.5, cy);
+      cy += 5;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(...BODY);
+      const aLines = doc.splitTextToSize(`${answerLabel}${ptsSuffix}`, CONTENT_W - 8);
+      doc.text(aLines, MARGIN + 3.5, cy);
+      cy += aLines.length * 4.3 + 4;
+
       if (pq.controlDescription?.trim()) {
         cy = ensureSpace(doc, cy, 16);
         doc.setFont("helvetica", "normal");
@@ -782,11 +868,15 @@ async function buildAndSavePdf(
         cy += 3;
       };
 
-      const procedureBody =
-        steps.length > 0
-          ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
-          : "1. Review available evidence against the control requirement.";
-      writeLabeledBlock("TEST PROCEDURE", procedureBody);
+      if (!lightDetail) {
+        const procedureBody =
+          steps.length > 0
+            ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+            : "1. Review available evidence against the control requirement.";
+        writeLabeledBlock("TEST PROCEDURE", procedureBody);
+      } else if (pq.testProcedure?.trim()) {
+        writeLabeledBlock("ASSESSMENT CONTEXT", pq.testProcedure.trim());
+      }
       writeLabeledBlock(
         "TESTER & TEST DATE",
         `Tester: ${testerName(ans, detail)}    Test date: ${formatDate(
