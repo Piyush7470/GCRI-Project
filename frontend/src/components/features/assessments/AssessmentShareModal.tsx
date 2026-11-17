@@ -129,9 +129,13 @@ export function AssessmentShareModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50">
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50" role="presentation">
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border-2 border-slate-500 dark:border-slate-400 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col"
+      >
+        <div className="p-4 border-b-2 border-slate-200 dark:border-slate-600 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <Share2 className="h-4 w-4 text-teal-600 shrink-0" />
             <div className="min-w-0">

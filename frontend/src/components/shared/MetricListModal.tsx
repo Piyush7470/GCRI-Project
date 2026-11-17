@@ -86,19 +86,19 @@ export function MetricListModal({
       onClick={onClose}
     >
       <div
-        className={`bg-white rounded-2xl shadow-2xl border border-slate-200 w-full ${sizeClass[size]} max-h-[min(85vh,720px)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}
+        className={`bg-white rounded-2xl shadow-2xl border-2 border-slate-500 w-full ${sizeClass[size]} max-h-[min(85vh,720px)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-4 py-3.5 border-b border-slate-100 flex items-start justify-between gap-3 shrink-0">
+        <div className="px-4 py-3.5 border-b-2 border-slate-200 flex items-start justify-between gap-3 shrink-0 bg-slate-50/80">
           <div className="min-w-0">
             <h3 id="metric-list-modal-title" className="font-bold text-slate-900 text-sm">
               {title}
             </h3>
             {description && (
-              <p className="text-[11px] text-slate-500 mt-0.5">{description}</p>
+              <p className="text-[11px] text-slate-600 mt-0.5">{description}</p>
             )}
-            <p className="text-[11px] font-semibold text-teal-700 mt-1">
-              {rows.length} item{rows.length === 1 ? "" : "s"}
+            <p className="text-[11px] font-bold text-teal-800 mt-1 tabular-nums">
+              Showing {rows.length} record{rows.length === 1 ? "" : "s"}
             </p>
           </div>
           <button
@@ -115,10 +115,10 @@ export function MetricListModal({
           {rows.length === 0 ? (
             <div className="px-4 py-10 text-center text-xs text-slate-500">{emptyMessage}</div>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-slate-200">
               {pagination.pageItems.map((row) => {
                 const content = (
-                  <div className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50/90 transition">
+                  <div className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 transition border-l-2 border-transparent hover:border-teal-400">
                     <EntityImage
                       src={row.imageUrl}
                       name={row.imageName || row.title}

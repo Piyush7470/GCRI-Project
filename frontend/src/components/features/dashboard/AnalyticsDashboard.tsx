@@ -341,50 +341,97 @@ export function AnalyticsDashboard({
     ].filter((x) => x.value > 0);
   }, [data]);
 
+  const scopedUserCount =
+    data?.kpiDirectories?.users?.length ?? data?.kpis.totalUsers.value ?? 0;
+  const scopedAuditorCount =
+    data?.kpiDirectories?.auditors?.length ?? data?.kpis.totalAuditors.value ?? 0;
+  const scopedOrgCount =
+    data?.organizationAccounts?.length ?? data?.kpis.totalOrganizations.value ?? 0;
+
   const kpiCards = data
     ? [
         {
           key: "users",
           label: isAuditor ? "Scoped Users" : "Total Platform Users",
-          kpi: data.kpis.totalUsers,
+          kpi: {
+            ...data.kpis.totalUsers,
+            // Prefer directory length so tile matches popup rows.
+            value: data.kpiDirectories?.users
+              ? scopedUserCount
+              : data.kpis.totalUsers.value,
+            hint: isAuditor
+              ? `${scopedUserCount} user${scopedUserCount === 1 ? "" : "s"} on assigned orgs`
+              : data.kpis.totalUsers.hint || `${data.kpis.totalUsers.value} platform accounts`,
+          },
           icon: Users,
           theme: "bg-blue-50 text-blue-700",
         },
         {
           key: "auditors",
           label: isAuditor ? "Active Assessor" : "Accredited Auditors",
-          kpi: data.kpis.totalAuditors,
+          kpi: {
+            ...data.kpis.totalAuditors,
+            value: data.kpiDirectories?.auditors
+              ? scopedAuditorCount
+              : data.kpis.totalAuditors.value,
+            hint: isAuditor
+              ? `${scopedAuditorCount} assessor${scopedAuditorCount === 1 ? "" : "s"} in scope`
+              : data.kpis.totalAuditors.hint || "Accredited assessors",
+          },
           icon: UserCheck,
           theme: "bg-emerald-50 text-emerald-700",
         },
         {
           key: "orgs",
           label: isAuditor ? "Assigned Organizations" : "Client Organizations",
-          kpi: data.kpis.totalOrganizations,
+          kpi: {
+            ...data.kpis.totalOrganizations,
+            value: data.organizationAccounts
+              ? scopedOrgCount
+              : data.kpis.totalOrganizations.value,
+            hint: isAuditor
+              ? `${scopedOrgCount} assigned organization${scopedOrgCount === 1 ? "" : "s"}`
+              : data.kpis.totalOrganizations.hint || "Client accounts",
+          },
           icon: Building2,
           theme: "bg-indigo-50 text-indigo-700",
         },
         {
           key: "assessments",
           label: "Total Assessments",
-          kpi: data.kpis.totalAssessments,
+          kpi: {
+            ...data.kpis.totalAssessments,
+            hint:
+              data.kpis.totalAssessments.hint ||
+              `${data.assessmentPipeline.completed} done · ${data.assessmentPipeline.inProgress} in progress · ${data.assessmentPipeline.notStarted} pending`,
+          },
           icon: FileCheck2,
           theme: "bg-teal-50 text-teal-700",
         },
         {
           key: "compliance",
           label: "Compliance Score",
-          kpi: data.kpis.complianceScore,
+          kpi: {
+            ...data.kpis.complianceScore,
+            hint:
+              data.kpis.complianceScore.hint ||
+              "Average maturity % across submitted assessments",
+          },
           icon: TrendingUp,
           theme: "bg-violet-50 text-violet-700",
         },
         {
           key: "risks",
           label: "Open Security Risks",
-          kpi: data.kpis.openRisks,
+          kpi: {
+            ...data.kpis.openRisks,
+            hint:
+              data.kpis.openRisks.hint ||
+              `${data.riskSeverity.critical} critical · ${data.riskSeverity.high} high · ${data.riskSeverity.medium} medium · ${data.riskSeverity.low} low`,
+          },
           icon: ShieldAlert,
           theme: data.kpis.openRisks.outlier
-            ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
+            ? "bg-rose-50 text-rose-700 ring-1 ring-rose-300"
             : "bg-amber-50 text-amber-800",
           invertDelta: true,
         },
@@ -723,27 +770,27 @@ export function AnalyticsDashboard({
                   type="button"
                   onClick={() => openMetric(modalKey)}
                   className={cn(
-                    "rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
-                    card.kpi.outlier && "border-rose-200 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
+                    "rounded-2xl border-2 border-slate-300 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-500 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
+                    card.kpi.outlier && "border-rose-400 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className={cn("h-8 w-8 rounded-xl flex items-center justify-center", card.theme)}>
+                    <div className={cn("h-8 w-8 rounded-xl flex items-center justify-center border border-slate-200/80", card.theme)}>
                       <Icon className="h-4 w-4" />
                     </div>
                     <DeltaBadge delta={card.kpi.deltaPct} invert={card.invertDelta} />
                   </div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mt-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 mt-3">
                     {card.label}
                   </p>
-                  <p className="text-2xl font-bold text-slate-900 tabular-nums mt-0.5">
+                  <p className="text-2xl font-extrabold text-slate-900 tabular-nums mt-0.5 tracking-tight">
                     {card.kpi.value}
                     {card.kpi.suffix || ""}
                   </p>
-                  <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                  <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 font-medium">
                     {card.kpi.hint || `vs prior ${range}`}
                   </p>
-                  <p className="text-[10px] font-semibold text-teal-700 mt-1.5">View details →</p>
+                  <p className="text-[10px] font-bold text-teal-700 mt-1.5">View details →</p>
                 </button>
               );
             })}
