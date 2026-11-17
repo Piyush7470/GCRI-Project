@@ -27,6 +27,8 @@ import {
   TrendingUp,
   TrendingDown,
   BarChart2,
+  MoreVertical,
+  Save,
 } from "lucide-react";
 import { companyService } from "@/services/company.service";
 import { auditorMappingService } from "@/services/auditorMapping.service";
@@ -61,8 +63,9 @@ export default function OrganizationProfileFullPage({
 
   const [activeTab, setActiveTab] = useState<"overview" | "assessments" | "people" | "documents">("overview");
 
-  // Inline profile edit (PATCH /companies/:id — name, registrationNumber, country, industry only)
-  const [isEditing, setIsEditing] = useState(false);
+  // Edit Profile modal (Actions → Edit Profile)
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState(false);
@@ -167,7 +170,7 @@ export default function OrganizationProfileFullPage({
             : updatedRes.data
         );
       }
-      setIsEditing(false);
+      setEditModalOpen(false);
       setEditSuccess(true);
       setTimeout(() => setEditSuccess(false), 3000);
     } catch (err: any) {
@@ -175,6 +178,23 @@ export default function OrganizationProfileFullPage({
     } finally {
       setSavingEdit(false);
     }
+  };
+
+  const openEditProfileModal = () => {
+    if (!company) return;
+    setEditForm({
+      name: company.name || "",
+      industry: company.industry || "",
+      country: company.country || "",
+      registrationNumber: company.registrationNumber || "",
+      activePlan: company.activePlan || "Bronze",
+      contactName: profileContact.name || "",
+      contactEmail: profileContact.email || "",
+      contactPhone: profileContact.phone || "",
+    });
+    setEditError(null);
+    setActionsMenuOpen(false);
+    setEditModalOpen(true);
   };
 
   // Fetch Assigned Auditors
@@ -521,27 +541,39 @@ export default function OrganizationProfileFullPage({
                   <Building2 className="h-4 w-4 text-teal-600" />
                   Organization Profile
                 </h3>
-                {isAdmin && !isEditing && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditForm({
-                        name: company.name || "",
-                        industry: company.industry || "",
-                        country: company.country || "",
-                        registrationNumber: company.registrationNumber || "",
-                        activePlan: company.activePlan || "Bronze",
-                        contactName: profileContact.name || "",
-                        contactEmail: profileContact.email || "",
-                        contactPhone: profileContact.phone || "",
-                      });
-                      setEditError(null);
-                      setIsEditing(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition"
-                  >
-                    <Edit3 className="h-3 w-3" /> Edit Profile
-                  </button>
+                {(isAdmin || isSuperAdmin) && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setActionsMenuOpen((open) => !open)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-teal-700 bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-200 rounded-lg transition"
+                      aria-haspopup="menu"
+                      aria-expanded={actionsMenuOpen}
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" />
+                      Actions
+                    </button>
+                    {actionsMenuOpen && (
+                      <>
+                        <button
+                          type="button"
+                          className="fixed inset-0 z-10 cursor-default"
+                          aria-label="Close actions menu"
+                          onClick={() => setActionsMenuOpen(false)}
+                        />
+                        <div className="absolute right-0 top-full mt-1 z-20 min-w-[150px] rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+                          <button
+                            type="button"
+                            onClick={openEditProfileModal}
+                            className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-teal-50 hover:text-teal-800 inline-flex items-center gap-2"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            Edit Profile
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -588,113 +620,6 @@ export default function OrganizationProfileFullPage({
                 />
               )}
 
-              {isEditing ? (
-                <form onSubmit={handleSaveProfileEdit} className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="col-span-2">
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">Name</label>
-                    <input
-                      required
-                      value={editForm.name}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">Industry</label>
-                    <input
-                      value={editForm.industry}
-                      onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">Country</label>
-                    <input
-                      value={editForm.country}
-                      onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">
-                      Registration Number
-                    </label>
-                    <input
-                      value={editForm.registrationNumber}
-                      onChange={(e) => setEditForm({ ...editForm, registrationNumber: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">
-                      Subscription Tier
-                    </label>
-                    <select
-                      value={editForm.activePlan}
-                      onChange={(e) =>
-                        setEditForm({ ...editForm, activePlan: e.target.value as SubscriptionTier })
-                      }
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    >
-                      <option value="Bronze">Bronze</option>
-                      <option value="Silver">Silver</option>
-                      <option value="Gold">Gold</option>
-                    </select>
-                  </div>
-                  <div className="col-span-2 pt-1 border-t border-slate-100">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Primary contact
-                    </p>
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">
-                      Contact person
-                    </label>
-                    <input
-                      value={editForm.contactName}
-                      onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={editForm.contactEmail}
-                      onChange={(e) => setEditForm({ ...editForm, contactEmail: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-400 block text-[11px] uppercase font-semibold mb-1">Phone</label>
-                    <input
-                      type="tel"
-                      value={editForm.contactPhone}
-                      onChange={(e) => setEditForm({ ...editForm, contactPhone: e.target.value })}
-                      className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
-                    />
-                  </div>
-                  <div className="col-span-2 flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsEditing(false);
-                        setEditError(null);
-                      }}
-                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={savingEdit}
-                      className="px-3.5 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-teal-600 to-blue-600 rounded-lg disabled:opacity-50"
-                    >
-                      {savingEdit ? "Saving..." : "Save Changes"}
-                    </button>
-                  </div>
-                </form>
-              ) : (
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Industry</span>
@@ -754,7 +679,6 @@ export default function OrganizationProfileFullPage({
                   </span>
                 </div>
               </div>
-              )}
             </div>
 
             <div className="space-y-4">
@@ -1145,6 +1069,136 @@ export default function OrganizationProfileFullPage({
         variant={confirmModal.variant}
         loading={confirmModal.loading}
       />
+
+      {/* Edit Profile popup */}
+      <Modal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          setEditError(null);
+        }}
+        title="Edit Profile"
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSaveProfileEdit} className="grid grid-cols-2 gap-3 text-xs">
+          {editError && (
+            <div className="col-span-2 p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
+              {editError}
+            </div>
+          )}
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Name</label>
+            <input
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Industry</label>
+            <input
+              value={editForm.industry}
+              onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Country</label>
+            <input
+              value={editForm.country}
+              onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Registration Number
+            </label>
+            <input
+              value={editForm.registrationNumber}
+              onChange={(e) => setEditForm({ ...editForm, registrationNumber: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Subscription Tier
+            </label>
+            <select
+              value={editForm.activePlan}
+              onChange={(e) =>
+                setEditForm({ ...editForm, activePlan: e.target.value as SubscriptionTier })
+              }
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            >
+              <option value="Bronze">Bronze</option>
+              <option value="Silver">Silver</option>
+              <option value="Gold">Gold</option>
+            </select>
+          </div>
+          <div className="col-span-2 pt-1 border-t border-slate-100">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+              Primary contact
+            </p>
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Contact person
+            </label>
+            <input
+              value={editForm.contactName}
+              onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Email</label>
+            <input
+              type="email"
+              value={editForm.contactEmail}
+              onChange={(e) => setEditForm({ ...editForm, contactEmail: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Phone</label>
+            <input
+              type="tel"
+              value={editForm.contactPhone}
+              onChange={(e) => setEditForm({ ...editForm, contactPhone: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div className="col-span-2 flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                setEditModalOpen(false);
+                setEditError(null);
+              }}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingEdit}
+              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-teal-600 to-blue-600 rounded-lg disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {savingEdit ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-3.5 w-3.5" /> Save Changes
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
