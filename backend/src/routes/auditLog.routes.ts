@@ -7,7 +7,7 @@ import { AuditLogQuerySchema } from "../schemas/auditLog.schema.js";
 const router = Router();
 
 // Enforce authentication and SuperAdmin / Admin role across all audit log routes
-router.use(authenticate, authorize("SuperAdmin", "Admin"));
+router.use(authenticate, authorize("SuperAdmin", "Admin", "TenantAdmin"));
 
 /**
  * @openapi

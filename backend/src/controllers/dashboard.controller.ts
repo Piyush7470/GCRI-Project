@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from "express";
+import { Types } from "mongoose";
 import { AssessmentSession } from "../models/AssessmentSession.js";
 import { Company } from "../models/Company.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { TenantMembership } from "../models/TenantMembership.js";
 import { AssessmentFramework } from "../models/AssessmentFramework.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import { getAssignedOrganizationIds } from "../middlewares/companyScope.js";
@@ -35,24 +37,124 @@ function resolvePillarInfo(pillarId?: string, pillarNumber?: number) {
   return byId || CANONICAL_GRAICE_PILLARS[0];
 }
 
+const AUDITOR_ROLES = { $in: ["Assessor", "Auditor"] };
+
+function isDashboardAdminRole(role?: string) {
+  return role === "SuperAdmin" || role === "Admin" || role === "TenantAdmin";
+}
+
+type DashboardAdminFilters = {
+  isSuperAdmin: boolean;
+  userFilter: Record<string, unknown>;
+  auditorFilter: Record<string, unknown>;
+  orgFilter: Record<string, unknown>;
+  sessionFilter: Record<string, unknown>;
+  auditLogFilter: Record<string, unknown>;
+  tenantCompanyIds: Types.ObjectId[];
+};
+
+async function buildDashboardAdminFilters(req: Request): Promise<DashboardAdminFilters | null> {
+  const role = req.user?.role;
+  if (!req.user) return null;
+
+  if (role === "SuperAdmin") {
+    return {
+      isSuperAdmin: true,
+      userFilter: {},
+      auditorFilter: { role: AUDITOR_ROLES },
+      orgFilter: {},
+      sessionFilter: {},
+      auditLogFilter: { action: { $ne: "AUTHORIZATION_DENIED" } },
+      tenantCompanyIds: [],
+    };
+  }
+
+  if (role === "TenantAdmin" && req.user.tenantId) {
+    const tenantId = new Types.ObjectId(req.user.tenantId);
+    const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+    const tenantCompanyIds = tenantCompanies.map((c) => c._id);
+
+    const membershipAuditors = await TenantMembership.find({
+      tenantId,
+      role: "Auditor",
+      status: "Active",
+    })
+      .select("userId")
+      .lean();
+    const auditorIds = membershipAuditors.map((m) => m.userId);
+
+    const userOr: Record<string, unknown>[] = [{ tenantId }];
+    if (tenantCompanyIds.length) {
+      userOr.push({ companyId: { $in: tenantCompanyIds } });
+    }
+
+    const auditorFilter: Record<string, unknown> = { role: AUDITOR_ROLES };
+    if (auditorIds.length) {
+      auditorFilter._id = { $in: auditorIds };
+    } else {
+      auditorFilter.tenantId = tenantId;
+    }
+
+    const auditOr: Record<string, unknown>[] = [{ actorId: req.user.userId }];
+    if (tenantCompanyIds.length) {
+      auditOr.push({ "after.companyId": { $in: tenantCompanyIds.map(String) } });
+    }
+
+    return {
+      isSuperAdmin: false,
+      userFilter: { $or: userOr },
+      auditorFilter,
+      orgFilter: { tenantId },
+      sessionFilter: { tenantId },
+      auditLogFilter: { action: { $ne: "AUTHORIZATION_DENIED" }, $or: auditOr },
+      tenantCompanyIds,
+    };
+  }
+
+  if (req.user.companyId && (role === "Admin" || role === "TenantAdmin")) {
+    const companyId = req.user.companyId;
+    return {
+      isSuperAdmin: false,
+      userFilter: { companyId },
+      auditorFilter: { companyId, role: AUDITOR_ROLES },
+      orgFilter: { _id: companyId },
+      sessionFilter: { companyId },
+      auditLogFilter: { actorId: req.user.userId },
+      tenantCompanyIds: [],
+    };
+  }
+
+  return null;
+}
+
 /**
  * Admin Operational Dashboard Summary (Screen 7 Alignment)
  * Exposes high-level administrative numbers without any confidential assessment content.
  */
 export async function getAdminDashboardSummary(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user?.role !== "SuperAdmin" && req.user?.role !== "Admin") {
+    if (!isDashboardAdminRole(req.user?.role)) {
       return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
     }
 
-    const isSuperAdmin = req.user.role === "SuperAdmin";
-    const companyId = req.user.companyId;
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
+    }
 
-    // Filters based on role
-    const userFilter: Record<string, any> = isSuperAdmin ? {} : { companyId };
-    const auditorFilter: Record<string, any> = isSuperAdmin ? { role: "Assessor" } : { companyId, role: "Assessor" };
-    const orgFilter: Record<string, any> = isSuperAdmin ? {} : { _id: companyId };
-    const sessionFilter: Record<string, any> = isSuperAdmin ? {} : { companyId };
+    const {
+      isSuperAdmin,
+      userFilter,
+      auditorFilter,
+      orgFilter,
+      sessionFilter,
+      auditLogFilter,
+    } = scope;
 
     const [
       totalUsers,
@@ -73,9 +175,7 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
       AssessmentSession.countDocuments({ ...sessionFilter, status: "InProgress" }),
       AssessmentFramework.distinct("version").then((v) => v.length),
       Company.find(orgFilter).sort({ createdAt: -1 }).limit(5),
-      AuditLog.find(isSuperAdmin ? { action: { $ne: "AUTHORIZATION_DENIED" } } : { actorId: req.user.userId })
-        .sort({ timestamp: -1 })
-        .limit(6),
+      AuditLog.find(auditLogFilter).sort({ timestamp: -1 }).limit(6),
     ]);
 
     // Plan distributions
@@ -123,8 +223,14 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
         pillarsCount: 7,
         controlsCount: 65,
         questionsCount: 95,
-        evidenceItemsCount: await AssessmentSession.countDocuments({ "answers.evidenceAttachmentUrl": { $exists: true, $ne: "" } }),
-        reportsCount: await AssessmentSession.countDocuments({ reportMetadata: { $exists: true } }),
+        evidenceItemsCount: await AssessmentSession.countDocuments({
+          ...sessionFilter,
+          "answers.evidenceAttachmentUrl": { $exists: true, $ne: "" },
+        }),
+        reportsCount: await AssessmentSession.countDocuments({
+          ...sessionFilter,
+          reportMetadata: { $exists: true },
+        }),
         activeSubscriptions: bronzeCount + silverCount + goldCount,
         permissionRolesCount: 2,
       },
@@ -155,24 +261,51 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
  */
 export async function getAdminDashboardAnalytics(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user?.role !== "SuperAdmin" && req.user?.role !== "Admin") {
+    if (!isDashboardAdminRole(req.user?.role)) {
       return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
+    }
+
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
     }
 
     const range = (String(req.query.range || "30d") as AnalyticsRange);
     const validRanges: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
     const safeRange = validRanges.includes(range) ? range : "30d";
 
-    let companyId = req.user.role === "Admin" ? req.user.companyId : undefined;
+    let companyId: string | undefined;
     const scopeParam = typeof req.query.companyId === "string" ? req.query.companyId : "";
-    if (req.user.role === "SuperAdmin" && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
+
+    if (scope.isSuperAdmin && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
       companyId = scopeParam;
+    } else if (
+      scopeParam &&
+      /^[0-9a-fA-F]{24}$/.test(scopeParam) &&
+      req.user?.role === "TenantAdmin" &&
+      scope.tenantCompanyIds.some((id) => id.toString() === scopeParam)
+    ) {
+      companyId = scopeParam;
+    } else if (!scope.isSuperAdmin && req.user?.companyId && !req.user.tenantId) {
+      companyId = req.user.companyId;
+    } else if (!scope.isSuperAdmin && req.user?.role === "Admin" && req.user.companyId) {
+      companyId = req.user.companyId;
     }
 
     const analytics = await buildDashboardAnalytics({
       companyId: companyId || undefined,
-      isSuperAdmin: req.user.role === "SuperAdmin",
+      tenantId:
+        !companyId && req.user?.role === "TenantAdmin" && req.user.tenantId
+          ? req.user.tenantId
+          : undefined,
+      isSuperAdmin: scope.isSuperAdmin,
       range: safeRange,
+      tenantAdminUserId: req.user?.userId,
     });
 
     return sendSuccess(res, analytics);
@@ -253,12 +386,21 @@ export async function getAdminDashboardAssessments(req: Request, res: Response, 
     }
 
     if (search) {
-      const matchingCompanies = await Company.find({
+      const companySearch: Record<string, unknown> = {
         name: { $regex: search, $options: "i" },
-      }).select("_id");
+      };
+      if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+        companySearch.tenantId = req.user.tenantId;
+      }
+      const matchingCompanies = await Company.find(companySearch).select("_id");
       const companyIds = matchingCompanies.map((c) => c._id);
       if (req.user?.role === "Admin") {
         query.companyId = req.user.companyId;
+      } else if (req.user?.role === "TenantAdmin") {
+        query.companyId = { $in: companyIds };
+        if (req.user.tenantId) {
+          query.tenantId = req.user.tenantId;
+        }
       } else {
         query.companyId = { $in: companyIds };
       }
@@ -666,8 +808,18 @@ export async function exportAdminDashboardAnalytics(req: Request, res: Response,
     if (!user) {
       return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
     }
-    if (user.role !== "SuperAdmin" && user.role !== "Admin") {
+    if (!isDashboardAdminRole(user.role)) {
       return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
+    }
+
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
     }
 
     const format = parseAnalyticsExportFormat(req.query.format);
@@ -676,27 +828,46 @@ export async function exportAdminDashboardAnalytics(req: Request, res: Response,
     }
 
     const safeRange = parseAnalyticsRange(req.query.range);
-    let companyId = user.role === "Admin" ? user.companyId : undefined;
+    let companyId: string | undefined;
     const scopeParam = typeof req.query.companyId === "string" ? req.query.companyId : "";
-    if (user.role === "SuperAdmin" && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
+    if (scope.isSuperAdmin && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
       companyId = scopeParam;
+    } else if (
+      scopeParam &&
+      /^[0-9a-fA-F]{24}$/.test(scopeParam) &&
+      user.role === "TenantAdmin" &&
+      scope.tenantCompanyIds.some((id) => id.toString() === scopeParam)
+    ) {
+      companyId = scopeParam;
+    } else if (user.role === "Admin" && user.companyId) {
+      companyId = user.companyId;
     }
 
     const analytics = await buildDashboardAnalytics({
       companyId: companyId || undefined,
-      isSuperAdmin: user.role === "SuperAdmin",
+      tenantId:
+        !companyId && user.role === "TenantAdmin" && user.tenantId ? user.tenantId : undefined,
+      isSuperAdmin: scope.isSuperAdmin,
       range: safeRange,
+      tenantAdminUserId: user.userId,
     });
 
     let scopeLabel = "All organizations";
     if (companyId) {
       const org = await Company.findById(companyId).select("name").lean();
       scopeLabel = org?.name || "Scoped organization";
+    } else if (user.role === "TenantAdmin" && user.tenantId) {
+      scopeLabel = "Tenant workspace";
     }
 
     const ctx = {
       scopeLabel,
-      roleLabel: user.role === "SuperAdmin" ? "Super Administrator" : "Organization Administrator",
+      roleLabel:
+        user.role === "SuperAdmin"
+          ? "Super Administrator"
+          : user.role === "TenantAdmin"
+            ? "Tenant Administrator"
+            : "Organization Administrator",
       requestedBy: user.email,
     };
 
