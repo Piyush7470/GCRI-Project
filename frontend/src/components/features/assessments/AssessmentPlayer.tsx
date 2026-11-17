@@ -509,12 +509,6 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   )}
                   Save
                 </button>
-                <Link
-                  href={`/assessments/${assessmentId}/review`}
-                  className="px-3 py-1.5 text-xs font-semibold bg-gradient-to-r from-teal-600 to-blue-600 text-white rounded-lg shadow-md hover:opacity-95 inline-flex items-center gap-1.5"
-                >
-                  <ClipboardCheck className="h-3.5 w-3.5" /> Review &amp; submit
-                </Link>
               </>
             )}
             {isSubmitted && (
