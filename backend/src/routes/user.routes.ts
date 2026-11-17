@@ -255,7 +255,12 @@ router.post("/accept-invite", validateRequest(AcceptInviteSchema), acceptInvite)
  *       403:
  *         description: Admin role required
  */
-router.get("/", authenticate, authorize("SuperAdmin", "Admin"), getUsers);
+router.get(
+  "/",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin", "Auditor", "Assessor"),
+  getUsers
+);
 
 /**
  * @openapi

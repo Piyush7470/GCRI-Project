@@ -105,23 +105,48 @@ export async function getUsers(req: Request, res: Response, next: NextFunction) 
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = {};
+    const actorRole = normalizeUserRole(req.user?.role);
 
-    // Organization Admins are strictly scoped to their own company
-    if (req.user?.role === "Admin") {
-      if (!req.user.companyId) {
+    // TenantAdmin / legacy Admin: scope to own tenant (preferred) or company
+    if (actorRole === "TenantAdmin") {
+      if (req.user?.tenantId) {
+        filter.tenantId = new Types.ObjectId(req.user.tenantId);
+      } else if (req.user?.companyId) {
+        filter.companyId = new Types.ObjectId(req.user.companyId);
+      } else {
         return sendSuccess(res, [], 200, { page, limit, total: 0, totalPages: 0 });
       }
-      filter.companyId = req.user.companyId;
+    } else if (actorRole === "Auditor") {
+      // Assessors may list peer auditors in the same tenant for assessment handoff/share.
+      if (!req.user?.tenantId) {
+        return sendSuccess(res, [], 200, { page, limit, total: 0, totalPages: 0 });
+      }
+      filter.tenantId = new Types.ObjectId(req.user.tenantId);
+      filter.status = "Active";
+      filter.role = { $in: ["Auditor", "Assessor"] };
+      if (req.user.userId) {
+        filter._id = { $ne: new Types.ObjectId(req.user.userId) };
+      }
     } else if (req.query.companyId && typeof req.query.companyId === "string") {
       // SuperAdmin can filter by specific organization
       filter.companyId = req.query.companyId;
     }
 
-    if (req.query.role && typeof req.query.role === "string") {
-      filter.role = req.query.role;
+    // Role filter (Auditors already locked to Auditor/Assessor above)
+    if (actorRole !== "Auditor" && req.query.role && typeof req.query.role === "string") {
+      const roleQ = req.query.role.trim();
+      if (roleQ === "Auditor" || roleQ === "Assessor") {
+        filter.role = { $in: ["Auditor", "Assessor"] };
+      } else {
+        filter.role = roleQ;
+      }
     }
 
-    if (req.query.status && typeof req.query.status === "string") {
+    if (
+      actorRole !== "Auditor" &&
+      req.query.status &&
+      typeof req.query.status === "string"
+    ) {
       filter.status = req.query.status;
     }
 

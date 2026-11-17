@@ -40,25 +40,36 @@ export function AssessmentShareModal({
         userService.getUsers({ role: "Auditor", limit: 100, status: "Active" }),
         assessmentService.getAssessmentById(sessionId),
       ]);
-      const list = Array.isArray(usersRes.data) ? usersRes.data : [];
-      setAuditors(list.filter((u) => u.role === "Auditor" || u.role === "Assessor"));
       const session = sessionRes.data?.session;
       const sw = session?.sharedWith ?? [];
-      setShared(
-        sw.map((s) => ({
-          _id:
-            typeof s.auditorId === "object" && s.auditorId
-              ? String((s.auditorId as { _id?: string })._id ?? "")
-              : String(s.auditorId),
-          name:
-            typeof s.auditorId === "object" && s.auditorId
-              ? String((s.auditorId as { name?: string }).name ?? "Auditor")
-              : "Auditor",
-          email:
-            typeof s.auditorId === "object" && s.auditorId
-              ? String((s.auditorId as { email?: string }).email ?? "")
-              : "",
-        }))
+      const sharedList = sw.map((s) => ({
+        _id:
+          typeof s.auditorId === "object" && s.auditorId
+            ? String((s.auditorId as { _id?: string })._id ?? "")
+            : String(s.auditorId),
+        name:
+          typeof s.auditorId === "object" && s.auditorId
+            ? String((s.auditorId as { name?: string }).name ?? "Auditor")
+            : "Auditor",
+        email:
+          typeof s.auditorId === "object" && s.auditorId
+            ? String((s.auditorId as { email?: string }).email ?? "")
+            : "",
+      }));
+      setShared(sharedList);
+      const sharedIds = new Set(sharedList.map((s) => s._id).filter(Boolean));
+      const leadId =
+        typeof session?.conductedByUserId === "object" && session?.conductedByUserId
+          ? String((session.conductedByUserId as { _id?: string })._id ?? "")
+          : String(session?.conductedByUserId ?? "");
+      const list = Array.isArray(usersRes.data) ? usersRes.data : [];
+      setAuditors(
+        list.filter(
+          (u) =>
+            (u.role === "Auditor" || u.role === "Assessor") &&
+            u._id !== leadId &&
+            !sharedIds.has(u._id)
+        )
       );
     } catch (err: unknown) {
       setError(getApiErrorMessage(err, "Could not load auditors."));
@@ -128,6 +139,9 @@ export function AssessmentShareModal({
               {sessionLabel && (
                 <p className="text-[11px] text-slate-500 truncate">{sessionLabel}</p>
               )}
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Same-tenant handoff — lead ownership stays with the current assessor.
+              </p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600">
