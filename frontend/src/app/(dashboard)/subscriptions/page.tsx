@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { companyService } from "@/services/company.service";
-import { dashboardService } from "@/services/dashboard.service";
 import { Company, SubscriptionTier } from "@/types/company.types";
 import { SubscriptionsPageSkeleton, DataTableSkeleton } from "@/components/shared/PageSkeletons";
 import { ListPagination } from "@/components/shared/ListPagination";
@@ -24,6 +24,7 @@ import {
   Clock,
   HardDrive,
   FileSpreadsheet,
+  ShieldAlert,
 } from "lucide-react";
 
 interface TierDefinition {
@@ -104,7 +105,8 @@ const TIERS: TierDefinition[] = [
 ];
 
 export default function SubscriptionsPage() {
-  const { user, isAdmin } = useAuth();
+  const router = useRouter();
+  const { loading: authLoading, isSuperAdmin } = useAuth();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,8 +128,13 @@ export default function SubscriptionsPage() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (authLoading) return;
+    if (!isSuperAdmin) {
+      router.replace("/dashboard");
+      return;
+    }
+    void loadData();
+  }, [authLoading, isSuperAdmin, router]);
 
   // Compute live client counts per tier from real company records
   const tierCounts = useMemo(() => {
@@ -152,6 +159,20 @@ export default function SubscriptionsPage() {
   }, [companies, searchQuery, tierFilter]);
 
   const companiesPagination = useClientPagination(filteredCompanies);
+
+  if (authLoading || !isSuperAdmin) {
+    return (
+      <div className="max-w-2xl mx-auto my-12 surface-panel p-8 text-center space-y-4 shadow-xs">
+        <div className="h-12 w-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+          <ShieldAlert className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-900">Super Admin Authorization Required</h2>
+        <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+          Subscription tiers are managed at the platform level by Super Admin only.
+        </p>
+      </div>
+    );
+  }
 
   if (loading && companies.length === 0 && !error) {
     return <SubscriptionsPageSkeleton />;

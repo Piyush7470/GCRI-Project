@@ -2878,12 +2878,16 @@ function AdminDashboardContent({
           {/* Footer Navigation */}
           <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-[11px] text-slate-400">Multi-tenant isolation &amp; RBAC enforced</span>
-            <Link
-              href="/subscriptions"
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition inline-flex items-center gap-1"
-            >
-              Manage Subscriptions &rarr;
-            </Link>
+            {isSuperAdmin ? (
+              <Link
+                href="/subscriptions"
+                className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition inline-flex items-center gap-1"
+              >
+                Manage Subscriptions &rarr;
+              </Link>
+            ) : (
+              <span className="text-[11px] text-slate-400">Subscription tiers managed by Super Admin</span>
+            )}
           </div>
         </div>
       </div>

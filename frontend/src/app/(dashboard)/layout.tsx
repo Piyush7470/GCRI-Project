@@ -88,7 +88,6 @@ function DashboardLayoutContent({
     { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
     { label: "Organizations", href: "/organizations", icon: Building2 },
     { label: "Assessments", href: "/assessments", icon: FileCheck2 },
-    { label: "Subscriptions", href: "/subscriptions", icon: CreditCard },
   ];
 
   const auditorSettingsNavItems = [
@@ -113,7 +112,6 @@ function DashboardLayoutContent({
         { label: "Assessments", href: "/assessments", icon: FileCheck2 },
         { label: "Auditor Mappings", href: "/admin/auditor-mappings", icon: UserCheck },
         { label: "API Keys", href: "/admin/api-keys", icon: Lock },
-        { label: "Subscriptions", href: "/subscriptions", icon: CreditCard },
         { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
       ];
 
