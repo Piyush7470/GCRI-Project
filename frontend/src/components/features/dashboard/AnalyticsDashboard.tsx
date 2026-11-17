@@ -207,6 +207,35 @@ export function AnalyticsDashboard({
   useEffect(() => {
     if (metricModal !== "users" && metricModal !== "auditors") return;
     let cancelled = false;
+
+    const fromAnalytics =
+      metricModal === "auditors"
+        ? data?.kpiDirectories?.auditors
+        : data?.kpiDirectories?.users;
+
+    // Prefer analytics KPI directories so modal rows match the tile count
+    // (especially for auditor "Scoped Users" which /users cannot return).
+    if (fromAnalytics && fromAnalytics.length >= 0) {
+      setUserModalLoading(false);
+      setUserModalRows(
+        fromAnalytics.map((u) => ({
+          id: u._id,
+          title: u.name || u.email,
+          subtitle: u.email,
+          meta: u.companyName ? `${u.role} · ${u.companyName}` : u.role,
+          badge: u.status,
+          badgeTone: (u.status === "Active" ? "success" : "warning") as
+            | "success"
+            | "warning",
+          imageUrl: u.avatarUrl,
+          imageName: u.name,
+          imageVariant: "avatar" as const,
+          href: isAuditor ? undefined : "/admin/users",
+        }))
+      );
+      return;
+    }
+
     (async () => {
       setUserModalLoading(true);
       try {
@@ -231,7 +260,7 @@ export function AnalyticsDashboard({
             imageUrl: u.avatar?.url,
             imageName: u.name,
             imageVariant: "avatar" as const,
-            href: "/admin/users",
+            href: isAuditor ? undefined : "/admin/users",
           }))
         );
       } catch (err) {
@@ -246,7 +275,7 @@ export function AnalyticsDashboard({
     return () => {
       cancelled = true;
     };
-  }, [metricModal, analyticsCompanyId, toast]);
+  }, [metricModal, analyticsCompanyId, toast, data?.kpiDirectories, isAuditor]);
 
   const handleExport = async (format: "pdf" | "xlsx") => {
     if (exporting) return;
@@ -1285,12 +1314,16 @@ export function AnalyticsDashboard({
             description={
               userModalLoading
                 ? "Loading directory…"
-                : "Paginated directory — open a row for user management"
+                : isAuditor
+                  ? metricModal === "auditors"
+                    ? `${userModalRows.length} assessor(s) in your analytics scope`
+                    : `${userModalRows.length} user(s) linked to your assigned organizations`
+                  : "Paginated directory — open a row for user management"
             }
             rows={userModalRows}
             emptyMessage={userModalLoading ? "Loading…" : "No users found."}
-            footerHref="/admin/users"
-            footerLabel="Open Users"
+            footerHref={isAuditor ? undefined : "/admin/users"}
+            footerLabel={isAuditor ? undefined : "Open Users"}
             size="lg"
           />
 

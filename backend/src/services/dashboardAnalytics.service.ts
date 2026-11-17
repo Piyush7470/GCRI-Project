@@ -107,6 +107,11 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     };
   }
 
+  // Assessor/Auditor role aliases — KPI + directory must use the same filter.
+  if (auditorFilter.role === "Assessor") {
+    auditorFilter.role = { $in: ["Assessor", "Auditor"] };
+  }
+
   const [
     totalUsers,
     prevUsers,
@@ -126,6 +131,8 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     orgsCreatedAll,
     auditLogsInPeriod,
     auditors,
+    scopedUsersDirectory,
+    scopedAuditorsDirectory,
   ] = await Promise.all([
     User.countDocuments(userFilter),
     User.countDocuments({ ...userFilter, createdAt: { $lt: periodStart } }),
@@ -164,6 +171,20 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
       .select("timestamp action")
       .lean(),
     User.find(auditorFilter).select("name email").limit(100).lean(),
+    // Same filter as totalUsers KPI — used by Scoped Users / Platform Users modal.
+    User.find(userFilter)
+      .select("name email role status companyId avatar createdAt")
+      .populate("companyId", "name domain")
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean(),
+    // Same filter as totalAuditors KPI — used by Active Assessor / Accredited Auditors modal.
+    User.find(auditorFilter)
+      .select("name email role status companyId avatar createdAt")
+      .populate("companyId", "name domain")
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean(),
   ]);
 
   // Compliance score from submitted sessions with scoreSnapshot
@@ -767,6 +788,40 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     recentActivity,
     assessmentTypeMix,
     outliers: outliers.slice(0, 12),
+    kpiDirectories: {
+      users: (scopedUsersDirectory || []).map((u) => ({
+        _id: String(u._id),
+        name: u.name || "",
+        email: u.email || "",
+        role: u.role || "",
+        status: u.status || "Active",
+        companyName:
+          u.companyId && typeof u.companyId === "object" && "name" in u.companyId
+            ? String((u.companyId as { name?: string }).name || "")
+            : "",
+        avatarUrl:
+          u.avatar && typeof u.avatar === "object" && "url" in u.avatar
+            ? String((u.avatar as { url?: string }).url || "")
+            : undefined,
+        createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
+      })),
+      auditors: (scopedAuditorsDirectory || []).map((u) => ({
+        _id: String(u._id),
+        name: u.name || "",
+        email: u.email || "",
+        role: u.role || "",
+        status: u.status || "Active",
+        companyName:
+          u.companyId && typeof u.companyId === "object" && "name" in u.companyId
+            ? String((u.companyId as { name?: string }).name || "")
+            : "",
+        avatarUrl:
+          u.avatar && typeof u.avatar === "object" && "url" in u.avatar
+            ? String((u.avatar as { url?: string }).url || "")
+            : undefined,
+        createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
+      })),
+    },
   };
 }
 
