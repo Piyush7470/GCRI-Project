@@ -128,17 +128,15 @@ export default function AssessmentsPage() {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 dark:border-slate-700/80 pb-5">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="page-title font-editorial">
-              Assessments Workspace
-            </h1>
+      <header className="page-header flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="page-title page-title-lg font-editorial">Assessments Workspace</h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
               {isAdmin ? "Platform Audit Tracker" : "Auditor Workload"}
             </span>
           </div>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+          <p className="page-subtitle mt-1.5">
             {isAdmin
               ? "Operational metadata tracking across client assessments. Confidential answers are strictly restricted."
               : "Execute evaluations across 7 GRAICE Pillars, capture evidence, and generate audit reports."}
@@ -146,7 +144,7 @@ export default function AssessmentsPage() {
         </div>
 
         {(isAssessor || isOrgAdmin) && !isSuperAdmin && (
-          <div>
+          <div className="shrink-0">
             <Link
               href="/assessments/new"
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0c162c] hover:bg-slate-800 dark:bg-teal-600 dark:hover:bg-teal-500 text-white font-semibold text-sm rounded-lg shadow-sm transition"
@@ -156,7 +154,7 @@ export default function AssessmentsPage() {
             </Link>
           </div>
         )}
-      </div>
+      </header>
 
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900/90 p-4 rounded-xl border border-slate-200/90 dark:border-slate-700 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">

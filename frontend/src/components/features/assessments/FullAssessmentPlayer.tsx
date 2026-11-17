@@ -531,7 +531,10 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
 
   const canGoPrev = currentIndex > 0;
   const isLastQuestion = currentIndex >= questions.length - 1;
-  const canGoNext = !isLastQuestion;
+  const currentCanProceed = Boolean(currentAnswer && isControlAssessed(currentAnswer));
+  const canGoNext = !isLastQuestion && !isSubmitted;
+  const canAdvanceNext = canGoNext && currentCanProceed;
+  const canGoReviewSubmit = isLastQuestion && currentCanProceed && !isSubmitted;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-2.5 w-full max-w-[1600px] mx-auto">
@@ -595,19 +598,6 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                   Retry save
                 </button>
               )}
-              <button
-                type="button"
-                onClick={goToReview}
-                disabled={navigatingReview || autosaveStatus === "saving"}
-                className="px-4 py-2 text-xs font-semibold bg-gradient-to-r from-teal-600 to-blue-600 text-white rounded-lg shadow-md hover:opacity-95 inline-flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {navigatingReview ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <ClipboardCheck className="h-3.5 w-3.5" />
-                )}
-                Review &amp; submit
-              </button>
             </>
           )}
           {isSubmitted && (
@@ -1049,34 +1039,50 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 >
                   <ChevronLeft className="h-4 w-4" /> Previous
                 </button>
-                {canGoNext ? (
-                  <button
-                    type="button"
-                    onClick={() => goToIndex(currentIndex + 1)}
-                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 inline-flex items-center gap-1 shadow-md"
-                  >
-                    Next <ChevronRight className="h-4 w-4" />
-                  </button>
-                ) : isSubmitted ? (
-                  <Link
-                    href={`/assessments/${assessmentId}/results`}
-                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-1.5 shadow-md"
-                  >
-                    <FileCheck2 className="h-4 w-4" /> Results
-                  </Link>
+                {isLastQuestion ? (
+                  isSubmitted ? (
+                    <Link
+                      href={`/assessments/${assessmentId}/results`}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-1.5 shadow-md"
+                    >
+                      <FileCheck2 className="h-4 w-4" /> Results
+                    </Link>
+                  ) : canGoReviewSubmit ? (
+                    <button
+                      type="button"
+                      onClick={goToReview}
+                      disabled={navigatingReview || autosaveStatus === "saving"}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md disabled:opacity-50"
+                    >
+                      {navigatingReview ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ClipboardCheck className="h-4 w-4" />
+                      )}
+                      Review &amp; submit
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-200 text-slate-500 cursor-not-allowed inline-flex items-center gap-1.5"
+                    >
+                      <ClipboardCheck className="h-4 w-4" /> Review &amp; submit
+                    </button>
+                  )
                 ) : (
                   <button
                     type="button"
-                    onClick={goToReview}
-                    disabled={navigatingReview || autosaveStatus === "saving"}
-                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md disabled:opacity-50"
-                  >
-                    {navigatingReview ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ClipboardCheck className="h-4 w-4" />
+                    onClick={() => goToIndex(currentIndex + 1)}
+                    disabled={!canAdvanceNext}
+                    className={cn(
+                      "px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
+                      canAdvanceNext
+                        ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md"
+                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
                     )}
-                    Review &amp; submit
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
                   </button>
                 )}
               </div>

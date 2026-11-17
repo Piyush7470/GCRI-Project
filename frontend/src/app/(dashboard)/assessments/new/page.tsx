@@ -13,6 +13,7 @@ import { Company } from "@/types/company.types";
 import { CreateAssessmentPayload } from "@/types/assessment.types";
 import { AssessmentFramework } from "@/types/framework.types";
 import { FormFieldsSkeleton } from "@/components/shared/PageSkeletons";
+import { PageHeader } from "@/components/shared/PageHeader";
 import {
   ArrowLeft,
   Building2,
@@ -192,20 +193,20 @@ function NewAssessmentPageContent() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-        <Link
-          href="/assessments"
-          className="p-2 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition shadow-2xs"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-        <div>
-          <h1 className="page-title font-editorial">Initiate Assessment</h1>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Select an assigned client organization and evaluation framework tier.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Initiate Assessment"
+        subtitle="Select an assigned client organization and evaluation framework tier."
+        large={false}
+        actions={
+          <Link
+            href="/assessments"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-semibold hover:bg-slate-50 transition shadow-2xs"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </Link>
+        }
+      />
 
       {error && (
         <div className="p-4 rounded-xl bg-red-50 border border-red-200 flex items-center gap-3 text-sm text-red-700">

@@ -37,7 +37,12 @@ const router = Router();
  *       403:
  *         description: Platform administrators only
  */
-router.get("/admin/summary", authenticate, authorize("SuperAdmin", "Admin"), getAdminDashboardSummary);
+router.get(
+  "/admin/summary",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  getAdminDashboardSummary
+);
 
 /**
  * @openapi
@@ -65,14 +70,14 @@ router.get("/admin/summary", authenticate, authorize("SuperAdmin", "Admin"), get
 router.get(
   "/admin/analytics",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
   getAdminDashboardAnalytics
 );
 
 router.get(
   "/admin/analytics/export",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
   exportAdminDashboardAnalytics
 );
 
@@ -118,7 +123,7 @@ router.get(
 router.get(
   "/admin/assessments",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
   validateRequest(AdminDashboardAssessmentsQuerySchema),
   getAdminDashboardAssessments
 );
@@ -141,7 +146,12 @@ router.get(
  *       403:
  *         description: Assessors only
  */
-router.get("/auditor/summary", authenticate, authorize("Assessor"), getAuditorDashboardSummary);
+router.get(
+  "/auditor/summary",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  getAuditorDashboardSummary
+);
 
 /**
  * @openapi
@@ -162,14 +172,14 @@ router.get("/auditor/summary", authenticate, authorize("Assessor"), getAuditorDa
 router.get(
   "/auditor/analytics",
   authenticate,
-  authorize("Assessor"),
+  authorize("Assessor", "Auditor"),
   getAuditorDashboardAnalytics
 );
 
 router.get(
   "/auditor/analytics/export",
   authenticate,
-  authorize("Assessor"),
+  authorize("Assessor", "Auditor"),
   exportAuditorDashboardAnalytics
 );
 
@@ -213,7 +223,7 @@ router.get(
 router.get(
   "/auditor/assessments",
   authenticate,
-  authorize("Assessor"),
+  authorize("Assessor", "Auditor"),
   validateRequest(AuditorDashboardAssessmentsQuerySchema),
   getAuditorDashboardAssessments
 );
@@ -232,6 +242,11 @@ router.get(
  *       200:
  *         description: Accessible organizations retrieved successfully
  */
-router.get("/auditor/organizations", authenticate, authorize("Assessor"), getAuditorOrganizations);
+router.get(
+  "/auditor/organizations",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  getAuditorOrganizations
+);
 
 export default router;

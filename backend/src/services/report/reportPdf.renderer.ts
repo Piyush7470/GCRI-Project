@@ -116,7 +116,9 @@ class ReportPdfRenderer {
     this.drawCoverAndExecutive();
     this.drawDetailedFindings();
     this.drawRemediationRoadmap();
-    this.drawControlEvaluations();
+    if (this.data.assessmentType !== "Light") {
+      this.drawControlEvaluations();
+    }
     this.finalizePageNumbers();
   }
 
@@ -664,6 +666,9 @@ class ReportPdfRenderer {
   }
 
   private drawRemediationRoadmap(): void {
+    if (!this.data.remediation.length) {
+      return;
+    }
     this.keepWithNext(40, 100);
     this.doc.roundedRect(MARGIN_X, this.y, CONTENT_W, 32, 3).fill(C.navy);
     this.doc
@@ -672,16 +677,6 @@ class ReportPdfRenderer {
       .fontSize(13)
       .text("Remediation Roadmap", MARGIN_X + 12, this.y + 10);
     this.y += 42;
-
-    if (!this.data.remediation.length) {
-      this.doc
-        .fillColor(C.text)
-        .font(this.font("reg"))
-        .fontSize(10)
-        .text("No remediation items identified for this assessment.", MARGIN_X, this.y);
-      this.y += 18;
-      return;
-    }
 
     const sorted = [...this.data.remediation].sort((a, b) => {
       if (a.priority !== b.priority) return a.priority === "High" ? -1 : 1;
@@ -703,13 +698,8 @@ class ReportPdfRenderer {
   }
 
   private drawControlEvaluations(): void {
-    this.addPage();
-    this.drawLogos();
-    const detailTitle =
-      this.data.assessmentType === "Light"
-        ? "Control Detail (Light Assessment)"
-        : "Control Detail (Full Assessment)";
-    this.sectionHeading(detailTitle);
+    this.keepWithNext(36, 100);
+    this.sectionHeading("Control Detail (Full Assessment)");
 
     let currentPillar = -1;
     for (const control of this.data.controls) {

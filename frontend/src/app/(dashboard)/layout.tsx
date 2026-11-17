@@ -84,6 +84,11 @@ function DashboardLayoutContent({
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  /** Fixed viewport + inner panes — only the live assessment workspace, not setup/review routes */
+  const isActiveAssessmentPlayer = Boolean(
+    pathname?.match(/^\/assessments\/[^/]+$/) && pathname !== "/assessments/new"
+  );
+
   const auditorNavItems = [
     { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
     { label: "Organizations", href: "/organizations", icon: Building2 },
@@ -169,13 +174,13 @@ function DashboardLayoutContent({
                       key={item.label}
                       href={item.href}
                       onClick={() => setMobileMenuOpen(false)}
-                      className={`group flex items-center justify-between px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                      className={`dashboard-nav-link group flex items-center justify-between px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
                         isActive
                           ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
                           : "text-slate-100 hover:text-white hover:bg-white/10"
                       }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <Icon className="h-[18px] w-[18px] shrink-0 text-white" strokeWidth={1.85} />
                         <span className="tracking-wide">{item.label}</span>
                       </div>
@@ -197,7 +202,7 @@ function DashboardLayoutContent({
                         key={item.label}
                         href={item.href}
                         onClick={() => setMobileMenuOpen(false)}
-                        className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                        className={`dashboard-nav-link group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
                           isActive
                             ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
                             : "text-slate-100 hover:text-white hover:bg-white/10"
@@ -226,7 +231,7 @@ function DashboardLayoutContent({
                       key={item.label}
                       href={item.href}
                       onClick={() => setMobileMenuOpen(false)}
-                      className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                      className={`dashboard-nav-link group flex items-center gap-2.5 min-w-0 px-3 py-1.5 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
                         isActive
                           ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
                           : "text-slate-100 hover:text-white hover:bg-white/10"
@@ -272,70 +277,76 @@ function DashboardLayoutContent({
 
       {/* Main Column */}
       <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden">
-        {/* Top Navbar - Fixed at top, never scrolls */}
-        <header className="glass-header h-16 px-4 sm:px-6 lg:px-8 flex items-center justify-between shrink-0 z-30">
-          <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
-            {/* Hamburger Button for Mobile */}
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-lg transition shrink-0"
-              aria-label="Open sidebar"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-
-            {/* Scope Selection with Search (Visible strictly on Dashboard) */}
-            {pathname === "/dashboard" && (
-              <SearchableScopeSelector activeRoleView={activeRoleView} />
-            )}
-          </div>
-
-          {/* Right Action Icons & User Profile */}
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-            <TenantWorkspaceSwitcher />
-            <ThemeToggle />
-
-            {/* Notification Bell */}
-            <button className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition">
-              <Bell className="h-5 w-5" />
-            </button>
-
-            {/* Help Icon - hidden on very small screens */}
-            <button className="hidden sm:flex p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition">
-              <HelpCircle className="h-5 w-5" />
-            </button>
-
-            {/* User Avatar & Dropdown */}
-            <div className="relative">
+        {/* Top bar — sticky; scope on second row below xl to avoid collisions */}
+        <header className="glass-header dashboard-top-bar shrink-0">
+          <div className="h-14 sm:h-[3.75rem] px-3 sm:px-5 lg:px-6 flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
               <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className="flex items-center gap-2 sm:gap-3 pl-1 sm:pl-2 pr-1 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition text-left"
+                type="button"
+                onClick={() => setMobileMenuOpen(true)}
+                className="lg:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-lg transition shrink-0"
+                aria-label="Open sidebar"
               >
-                <EntityImage
-                  src={user?.avatar?.url}
-                  name={user?.name}
-                  variant="avatar"
-                  size="md"
-                  cacheKey={user?.updatedAt || user?.avatar?.publicId}
-                  className="h-8 w-8 sm:h-9 sm:w-9 border border-slate-200 dark:border-slate-600"
-                />
-                <div className="hidden md:block">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-tight">
-                    {user?.name || "User"}
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 leading-tight">
-                    {isSuperAdmin
-                      ? "Super Admin"
-                      : isTenantAdmin
-                        ? "Tenant Admin"
-                        : isOrgAdmin
-                          ? "Org Admin"
-                          : "Auditor"}
-                  </div>
-                </div>
-                <ChevronDown className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400" />
+                <Menu className="h-5 w-5" />
               </button>
+
+              {pathname === "/dashboard" && (
+                <div className="hidden xl:flex items-center min-w-0 max-w-lg">
+                  <SearchableScopeSelector activeRoleView={activeRoleView} />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <TenantWorkspaceSwitcher />
+              <ThemeToggle />
+
+              <button
+                type="button"
+                className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition shrink-0"
+                aria-label="Notifications"
+              >
+                <Bell className="h-5 w-5" />
+              </button>
+
+              <button
+                type="button"
+                className="hidden lg:flex p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition shrink-0"
+                aria-label="Help"
+              >
+                <HelpCircle className="h-5 w-5" />
+              </button>
+
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className="flex items-center gap-1.5 sm:gap-2 pl-1 pr-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition text-left max-w-[200px] xl:max-w-[240px]"
+                >
+                  <EntityImage
+                    src={user?.avatar?.url}
+                    name={user?.name}
+                    variant="avatar"
+                    size="md"
+                    cacheKey={user?.updatedAt || user?.avatar?.publicId}
+                    className="h-8 w-8 sm:h-9 sm:w-9 border border-slate-200 dark:border-slate-600 shrink-0"
+                  />
+                  <div className="hidden lg:block min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-tight truncate">
+                      {user?.name || "User"}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight truncate">
+                      {isSuperAdmin
+                        ? "Super Admin"
+                        : isTenantAdmin
+                          ? "Tenant Admin"
+                          : isOrgAdmin
+                            ? "Org Admin"
+                            : "Auditor"}
+                    </div>
+                  </div>
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 hidden sm:block" />
+                </button>
 
               {showProfileMenu && (
                 <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 py-1.5 z-50 animate-in fade-in zoom-in-95">
@@ -368,8 +379,15 @@ function DashboardLayoutContent({
                   </button>
                 </div>
               )}
+              </div>
             </div>
           </div>
+
+          {pathname === "/dashboard" && (
+            <div className="xl:hidden border-t border-slate-200/70 dark:border-slate-700/60 px-3 sm:px-5 py-2 flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <SearchableScopeSelector activeRoleView={activeRoleView} />
+            </div>
+          )}
         </header>
 
         {/* Workspace Canvas */}
@@ -380,7 +398,7 @@ function DashboardLayoutContent({
             pathname?.includes("/admin/auditor-mappings") ||
             pathname?.includes("/organizations") ||
             pathname?.includes("/admin/tenants") ||
-            Boolean(pathname?.match(/^\/assessments\/[^/]+$/))
+            isActiveAssessmentPlayer
               ? "p-3 sm:p-4 overflow-hidden flex flex-col min-h-0"
               : "p-4 sm:p-6 lg:p-8 overflow-y-auto"
           }`}
@@ -431,7 +449,7 @@ function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" |
   });
 
   return (
-    <div ref={containerRef} className="relative flex items-center gap-2">
+    <div ref={containerRef} className="relative flex items-center gap-1.5 sm:gap-2 min-w-0 max-w-full">
       {/* Combobox Trigger Button */}
       <button
         type="button"
@@ -450,7 +468,7 @@ function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" |
           }`}
         />
         <span className="text-slate-500 font-normal hidden sm:inline">Scope:</span>
-        <span className="truncate max-w-[150px] sm:max-w-[220px]">
+        <span className="truncate max-w-[7rem] sm:max-w-[10rem] md:max-w-[12rem]">
           {selectedOrg ? selectedOrg.name : `All Organizations (${organizations.length})`}
         </span>
         <ChevronDown

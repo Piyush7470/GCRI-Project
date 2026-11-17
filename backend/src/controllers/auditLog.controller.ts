@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
+import { Types } from "mongoose";
 import { AuditLog } from "../models/AuditLog.js";
+import { Company } from "../models/Company.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 
 /**
@@ -59,6 +61,17 @@ export async function getAuditLogs(
       ];
     }
 
+    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+      const tenantId = new Types.ObjectId(req.user.tenantId);
+      const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+      const companyIds = tenantCompanies.map((c) => String(c._id));
+      const tenantScope: Record<string, unknown>[] = [
+        { actorId: req.user.userId },
+        ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
+      ];
+      filter.$and = [...(filter.$and ? (filter.$and as unknown[]) : []), { $or: tenantScope }];
+    }
+
     const [logs, total] = await Promise.all([
       AuditLog.find(filter)
         .sort({ timestamp: -1 })
@@ -90,6 +103,18 @@ export async function getAuditLogStats(
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    let baseFilter: Record<string, unknown> = {};
+    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+      const tenantId = new Types.ObjectId(req.user.tenantId);
+      const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+      const companyIds = tenantCompanies.map((c) => String(c._id));
+      const tenantScope: Record<string, unknown>[] = [
+        { actorId: req.user.userId },
+        ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
+      ];
+      baseFilter = { $or: tenantScope };
+    }
+
     const [
       totalEvents,
       eventsLast24Hours,
@@ -97,15 +122,17 @@ export async function getAuditLogStats(
       topActions,
       topEntities,
     ] = await Promise.all([
-      AuditLog.countDocuments(),
-      AuditLog.countDocuments({ timestamp: { $gte: oneDayAgo } }),
-      AuditLog.countDocuments({ action: "AUTHORIZATION_DENIED" }),
+      AuditLog.countDocuments(baseFilter),
+      AuditLog.countDocuments({ ...baseFilter, timestamp: { $gte: oneDayAgo } }),
+      AuditLog.countDocuments({ ...baseFilter, action: "AUTHORIZATION_DENIED" }),
       AuditLog.aggregate([
+        ...(Object.keys(baseFilter).length ? [{ $match: baseFilter }] : []),
         { $group: { _id: "$action", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },
       ]),
       AuditLog.aggregate([
+        ...(Object.keys(baseFilter).length ? [{ $match: baseFilter }] : []),
         { $group: { _id: "$entity", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },

@@ -96,8 +96,8 @@ export default function LoginPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="font-editorial text-xl font-bold text-slate-900">Sign in to your account</h3>
-        <p className="mt-1 text-sm font-medium text-slate-500">Access your organization assessments</p>
+        <h1 className="page-title text-xl sm:text-2xl font-editorial">Sign in to your account</h1>
+        <p className="page-subtitle mt-1.5">Access your organization assessments</p>
       </div>
 
       {error && (

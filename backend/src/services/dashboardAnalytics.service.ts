@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { AssessmentSession } from "../models/AssessmentSession.js";
 import { Company } from "../models/Company.js";
 import { Tenant } from "../models/Tenant.js";
+import { TenantMembership } from "../models/TenantMembership.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
 
@@ -62,9 +63,12 @@ function classifySeverity(scoreValue?: number, notes?: string): "Critical" | "Hi
 export interface DashboardAnalyticsScope {
   /** When set, restrict company/session scope to this org (Org Admin / scoped SuperAdmin). */
   companyId?: string | Types.ObjectId;
+  /** Tenant Admin: entire workspace (all client orgs in tenant). */
+  tenantId?: string | Types.ObjectId;
   /** When set (Assessor), restrict to these org ids + conductedBy. */
   assignedCompanyIds?: Array<string | Types.ObjectId>;
   auditorUserId?: string;
+  tenantAdminUserId?: string;
   isSuperAdmin?: boolean;
   range?: AnalyticsRange;
 }
@@ -88,6 +92,46 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     companyFilter._id = scope.companyId;
     userFilter.companyId = scope.companyId;
     auditorFilter.companyId = scope.companyId;
+  } else if (scope.tenantId) {
+    const tenantId = new Types.ObjectId(scope.tenantId);
+    sessionFilter.tenantId = tenantId;
+    companyFilter.tenantId = tenantId;
+
+    const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+    const tenantCompanyIds = tenantCompanies.map((c) => c._id);
+
+    const userOr: Record<string, unknown>[] = [{ tenantId }];
+    if (tenantCompanyIds.length) {
+      userOr.push({ companyId: { $in: tenantCompanyIds } });
+    }
+    Object.assign(userFilter, { $or: userOr });
+
+    const membershipAuditors = await TenantMembership.find({
+      tenantId,
+      role: "Auditor",
+      status: "Active",
+    })
+      .select("userId")
+      .lean();
+    const auditorIds = membershipAuditors.map((m) => m.userId);
+    auditorFilter.role = { $in: ["Assessor", "Auditor"] };
+    if (auditorIds.length) {
+      auditorFilter._id = { $in: auditorIds };
+    } else {
+      auditorFilter.tenantId = tenantId;
+    }
+
+    const auditOr: Record<string, unknown>[] = [];
+    if (scope.tenantAdminUserId) {
+      auditOr.push({ actorId: scope.tenantAdminUserId });
+    }
+    if (tenantCompanyIds.length) {
+      auditOr.push({ "after.companyId": { $in: tenantCompanyIds.map(String) } });
+    }
+    auditFilter =
+      auditOr.length > 0
+        ? { action: { $ne: "AUTHORIZATION_DENIED" }, $or: auditOr }
+        : { action: { $ne: "AUTHORIZATION_DENIED" } };
   } else if (scope.assignedCompanyIds?.length) {
     sessionFilter.$or = [
       { conductedByUserId: scope.auditorUserId },
