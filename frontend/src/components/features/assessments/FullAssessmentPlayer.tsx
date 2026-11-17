@@ -530,7 +530,8 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
             : "Idle";
 
   const canGoPrev = currentIndex > 0;
-  const canGoNext = currentIndex < questions.length - 1;
+  const isLastQuestion = currentIndex >= questions.length - 1;
+  const canGoNext = !isLastQuestion;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-2.5 w-full max-w-[1600px] mx-auto">
@@ -1056,6 +1057,13 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                   >
                     Next <ChevronRight className="h-4 w-4" />
                   </button>
+                ) : isSubmitted ? (
+                  <Link
+                    href={`/assessments/${assessmentId}/results`}
+                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-1.5 shadow-md"
+                  >
+                    <FileCheck2 className="h-4 w-4" /> Results
+                  </Link>
                 ) : (
                   <button
                     type="button"
@@ -1068,7 +1076,7 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                     ) : (
                       <ClipboardCheck className="h-4 w-4" />
                     )}
-                    Review
+                    Review &amp; submit
                   </button>
                 )}
               </div>
