@@ -213,6 +213,21 @@ function ensureSpace(doc: jsPDF, y: number, needed: number): number {
   return y;
 }
 
+/** New section page only when needed — never stack addPage() on an already-empty page */
+function beginSectionPage(doc: jsPDF, y: number): number {
+  if (y <= 22) {
+    return y;
+  }
+  if (y > FOOTER_Y - 48) {
+    doc.addPage();
+    return 16;
+  }
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.35);
+  doc.line(MARGIN, y + 2, PAGE_W - MARGIN, y + 2);
+  return y + 12;
+}
+
 function lastTableY(doc: jsPDF, fallback: number): number {
   return (doc as DocWithTable).lastAutoTable?.finalY ?? fallback;
 }
@@ -572,8 +587,7 @@ async function buildAndSavePdf(
   y += 8;
 
   // Detailed Findings — every pillar, every control
-  doc.addPage();
-  y = 16;
+  y = beginSectionPage(doc, y);
   y = drawSectionTitle(doc, "Detailed Findings", y);
 
   const pillarNumbers = [
@@ -703,22 +717,16 @@ async function buildAndSavePdf(
               "Implement documented remediation per GRAICE guidance.",
           }));
 
-  doc.addPage();
-  y = 16;
-  doc.setFillColor(...NAVY);
-  doc.roundedRect(MARGIN, y, CONTENT_W, 14, 2, 2, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text("Remediation Roadmap", MARGIN + 5, y + 9.5);
-  y += 20;
+  if (roadmapSource.length > 0) {
+    y = beginSectionPage(doc, y);
+    doc.setFillColor(...NAVY);
+    doc.roundedRect(MARGIN, y, CONTENT_W, 14, 2, 2, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Remediation Roadmap", MARGIN + 5, y + 9.5);
+    y += 20;
 
-  if (roadmapSource.length === 0) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10.5);
-    doc.setTextColor(...BODY);
-    doc.text("No remediation items identified for this assessment.", MARGIN, y);
-  } else {
     autoTable(doc, {
       startY: y,
       margin: { left: MARGIN, right: MARGIN },
@@ -758,14 +766,15 @@ async function buildAndSavePdf(
       },
       theme: "grid",
     });
+    y = lastTableY(doc, y + 20) + 12;
   }
 
-  // Control Detail — every control in every pillar
-  doc.addPage();
-  y = drawLogos(doc, gcraiLogo, graiceLogo, 11);
-  y = drawSectionTitle(doc, "Control Detail", y, true);
+  // Control Detail — Full assessments only (Light PDF uses Detailed Findings table)
+  if (summary.assessmentType !== "Light") {
+    y = beginSectionPage(doc, y);
+    y = drawSectionTitle(doc, "Control Detail", y, true);
 
-  for (const pillarNum of pillarNumbers) {
+    for (const pillarNum of pillarNumbers) {
     const sample = questions.find((q) => q.pillarNumber === pillarNum);
     const pillarMeta = pillarRows.find((p) => p.pillarNumber === pillarNum);
     const pillarName = sample?.pillarName || pillarMeta?.pillarName || `Pillar ${pillarNum}`;
@@ -792,8 +801,6 @@ async function buildAndSavePdf(
       const rText = recommendationText(pq, finding, rec?.recommendedAction);
       const align =
         pq.regulatoryAlignments || finding?.regulatoryAlignments || rec?.regulatoryAlignments;
-      const lightDetail = summary.assessmentType === "Light";
-
       // Start each control card with enough room for the header block
       y = ensureSpace(doc, y, 55);
       const cardTop = y;
@@ -804,13 +811,9 @@ async function buildAndSavePdf(
       doc.setTextColor(...NAVY);
       doc.text(pq.questionId, MARGIN + 3.5, cy);
       let badgeX = MARGIN + 3.5 + doc.getTextWidth(pq.questionId) + 4;
-      if (!lightDetail) {
-        badgeX = drawPillBadge(doc, pq.assuranceTier || "Tier 1", badgeX, cy);
-      }
+      badgeX = drawPillBadge(doc, pq.assuranceTier || "Tier 1", badgeX, cy);
       badgeX = drawPillBadge(doc, testStatusLabel(ans?.testStatus), badgeX, cy);
-      if (!lightDetail) {
-        drawPillBadge(doc, exc, badgeX, cy, { danger: exc === "Exception Noted" });
-      }
+      drawPillBadge(doc, exc, badgeX, cy, { danger: exc === "Exception Noted" });
       cy += 8;
 
       doc.setFont("helvetica", "bold");
@@ -868,15 +871,11 @@ async function buildAndSavePdf(
         cy += 3;
       };
 
-      if (!lightDetail) {
-        const procedureBody =
-          steps.length > 0
-            ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
-            : "1. Review available evidence against the control requirement.";
-        writeLabeledBlock("TEST PROCEDURE", procedureBody);
-      } else if (pq.testProcedure?.trim()) {
-        writeLabeledBlock("ASSESSMENT CONTEXT", pq.testProcedure.trim());
-      }
+      const procedureBody =
+        steps.length > 0
+          ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+          : "1. Review available evidence against the control requirement.";
+      writeLabeledBlock("TEST PROCEDURE", procedureBody);
       writeLabeledBlock(
         "TESTER & TEST DATE",
         `Tester: ${testerName(ans, detail)}    Test date: ${formatDate(
@@ -926,6 +925,7 @@ async function buildAndSavePdf(
         doc.line(MARGIN, cy + 1, PAGE_W - MARGIN, cy + 1);
       }
       y = cy + 8;
+    }
     }
   }
 
