@@ -288,8 +288,8 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
       </div>
 
       {incompleteCount > 0 && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex gap-3 text-sm text-amber-900">
-          <AlertTriangle className="h-5 w-5 shrink-0" />
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-300 flex gap-3 text-sm text-rose-900">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" />
           <p>
             <strong>{incompleteCount}</strong> control(s) are not fully completed. Submitting now may
             score unanswered items as zero or not assessed.
