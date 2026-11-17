@@ -8,6 +8,33 @@ export interface AnalyticsKpi {
   outlier?: boolean;
 }
 
+export interface OrganizationAccountAnalytics {
+  _id: string;
+  name: string;
+  domain: string;
+  industry: string;
+  accountType: "Client" | "Organization";
+  tenantId: string | null;
+  tenantName: string | null;
+  tenantStatus: string | null;
+  tenantsCount: number;
+  customersCount: number;
+  assessmentsDone: number;
+  assessmentsPending: number;
+  assessmentVolume: number;
+  exceptionsVolume: number;
+  complianceScore: number;
+  activePlan: string;
+  status: string;
+  verificationStatus: string;
+  pillarWise: Array<{
+    key: string;
+    name: string;
+    percentage: number;
+    exceptions: number;
+  }>;
+}
+
 export interface DashboardAnalytics {
   range: AnalyticsRange;
   periodDays: number;
@@ -52,11 +79,21 @@ export interface DashboardAnalytics {
     activePlan: string;
     status: string;
   }>;
+  organizationAccounts?: OrganizationAccountAnalytics[];
+  clientOrganizationSplit?: {
+    clients: number;
+    organizations: number;
+    totalAccounts: number;
+    uniqueTenants: number;
+    totalCustomers: number;
+  };
   auditorPerformance: Array<{
+    id?: string;
     name: string;
     email: string;
     assigned: number;
     completed: number;
+    pending?: number;
     completionRate: number;
   }>;
   assessmentPipeline: {
