@@ -3,8 +3,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans: sans-serif;
+  --font-display: sans-serif;
 }
 
 @layer base {
@@ -45,8 +45,7 @@
   body {
     background-color: #eef2f7;
     color: #0f172a;
-    font-family: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: sans-serif;
     line-height: 1.55;
     letter-spacing: -0.011em;
     margin: 0;
@@ -67,27 +66,25 @@
     line-height: 1.15;
   }
 
-  /* Module titles: bold display face across the app */
   h1 {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-weight: 800;
   }
 
   h2 {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-weight: 700;
   }
 
   h3.font-editorial,
   .font-editorial {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-weight: 700;
     letter-spacing: -0.02em;
   }
 
-  /* Utility titles used outside semantic heading tags */
   .module-title {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-weight: 800;
     letter-spacing: -0.03em;
     line-height: 1.12;
@@ -296,7 +293,7 @@
 
   /* ── Page & section typography ── */
   .page-title {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-size: 1.5rem;
     line-height: 1.12;
     font-weight: 800;
@@ -322,7 +319,7 @@
   }
 
   .section-heading {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-size: 0.9375rem;
     line-height: 1.25;
     font-weight: 700;
@@ -337,7 +334,7 @@
   }
 
   .auth-display-title {
-    font-family: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+    font-family: sans-serif;
     font-weight: 700;
     letter-spacing: -0.03em;
     text-shadow:

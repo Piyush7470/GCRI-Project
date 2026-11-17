@@ -5,7 +5,6 @@ import { ToastProvider } from "@/context/ToastContext";
 import { ApiLoadingProvider } from "@/context/ApiLoadingContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ApiLoadingBar } from "@/components/shared/ApiLoadingBar";
-import { fontDisplay, fontSans } from "@/lib/fonts";
 
 export const metadata: Metadata = {
   title: "GCRAI - Enterprise AI Governance & Assessment Platform",
@@ -20,17 +19,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${fontSans.variable} ${fontDisplay.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body
-        className={`${fontSans.className} antialiased min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 selection:bg-blue-600 selection:text-white`}
-      >
+      <body className="antialiased min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 selection:bg-blue-600 selection:text-white">
         <ApiLoadingProvider>
           <ThemeProvider>
             <AuthProvider>
