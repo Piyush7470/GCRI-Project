@@ -473,26 +473,28 @@ export function AnalyticsDashboard({
               : data.kpis.complianceScore.value >= 45
                 ? "warning"
                 : "danger",
-        },
-        ...data.complianceByPillar.map((p) => ({
-          id: `pillar-${p.key}`,
-          title: `${p.key} · ${p.name}`,
-          subtitle: `Portfolio completion ${p.percentage}%`,
-          badge: `${p.percentage}%`,
-          badgeTone:
-            p.percentage >= 70 ? "success" : p.percentage >= 40 ? "warning" : "danger",
-        })),
-        ...orgAccounts.map((org) => ({
-          id: `acct-comp-${org._id}`,
-          title: org.name,
-          subtitle: `Account compliance ${org.complianceScore}%`,
-          meta: org.pillarWise
-            .map((p) => `${p.key} ${p.percentage}%`)
-            .join(" · "),
-          badge: org.accountType,
-          badgeTone: "info" as const,
-          href: `/organizations/${org._id}`,
-        })),
+        } satisfies MetricListRow,
+        ...data.complianceByPillar.map(
+          (p): MetricListRow => ({
+            id: `pillar-${p.key}`,
+            title: `${p.key} · ${p.name}`,
+            subtitle: `Portfolio completion ${p.percentage}%`,
+            badge: `${p.percentage}%`,
+            badgeTone:
+              p.percentage >= 70 ? "success" : p.percentage >= 40 ? "warning" : "danger",
+          })
+        ),
+        ...orgAccounts.map(
+          (org): MetricListRow => ({
+            id: `acct-comp-${org._id}`,
+            title: org.name,
+            subtitle: `Account compliance ${org.complianceScore}%`,
+            meta: org.pillarWise.map((p) => `${p.key} ${p.percentage}%`).join(" · "),
+            badge: org.accountType,
+            badgeTone: "info",
+            href: `/organizations/${org._id}`,
+          })
+        ),
       ]
     : [];
 

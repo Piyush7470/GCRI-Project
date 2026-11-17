@@ -18,6 +18,10 @@ export interface ReportPillarProgress {
   completionPercentage: number;
   exceptionsNoted: number;
   noExceptions: number;
+  /** Scored points for this pillar (from score snapshot). */
+  scoreEarned: number;
+  scoreMax: number;
+  scorePercentage: number;
 }
 
 export interface ReportKpis {
@@ -42,6 +46,10 @@ export interface ReportControlEvaluation {
   exceptionStatus: string;
   isGap: boolean;
   questionText: string;
+  /** Human-readable selected response for this control. */
+  selectedAnswerLabel: string;
+  selectedOptionCode?: string;
+  scoreValue?: number;
   controlDescription?: string;
   testProcedure?: string;
   testProcedureSteps: string[];

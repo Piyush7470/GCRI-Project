@@ -191,14 +191,6 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
     return { withEvidence, withNotes };
   }, [session]);
 
-  const exceptionCount = useMemo(() => {
-    if (!session?.answers) return 0;
-    return session.answers.filter(
-      (a) =>
-        a.exceptionStatus === "ExceptionNoted" || a.selectedOptionCode === "EXCEPTION_NOTED"
-    ).length;
-  }, [session]);
-
   const incompleteCount = useMemo(() => {
     if (!progressData) return 0;
     return Math.max(0, progressData.totalQuestions - progressData.completedQuestions);
@@ -349,7 +341,6 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
                   <th className="py-2">Done</th>
                   <th className="py-2">Incomplete</th>
                   <th className="py-2">Not started</th>
-                  <th className="py-2">Exceptions</th>
                 </tr>
               </thead>
               <tbody>
@@ -359,7 +350,6 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
                     <td className="py-2">{p.complete}</td>
                     <td className="py-2">{p.inProgress}</td>
                     <td className="py-2">{p.notStarted}</td>
-                    <td className="py-2">{p.exceptionsNoted}</td>
                   </tr>
                 ))}
               </tbody>
@@ -368,7 +358,7 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
         </section>
       )}
 
-      <section className="bg-white rounded-2xl border border-slate-200 p-5 grid sm:grid-cols-3 gap-4 text-center">
+      <section className="bg-white rounded-2xl border border-slate-200 p-5 grid sm:grid-cols-2 gap-4 text-center">
         <div>
           <p className="text-2xl font-bold text-slate-900">{progressData?.completedQuestions ?? "—"}</p>
           <p className="text-[11px] uppercase font-semibold text-slate-500">Completed</p>
@@ -376,10 +366,6 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
         <div>
           <p className="text-2xl font-bold text-amber-700">{incompleteCount}</p>
           <p className="text-[11px] uppercase font-semibold text-slate-500">Incomplete / open</p>
-        </div>
-        <div>
-          <p className="text-2xl font-bold text-rose-700">{exceptionCount}</p>
-          <p className="text-[11px] uppercase font-semibold text-slate-500">Exceptions noted</p>
         </div>
       </section>
 
