@@ -379,8 +379,9 @@ function DashboardLayoutContent({
             pathname?.includes("/admin/users") ||
             pathname?.includes("/admin/auditor-mappings") ||
             pathname?.includes("/organizations") ||
-            pathname?.includes("/admin/tenants")
-              ? "p-4 sm:p-5 overflow-hidden flex flex-col"
+            pathname?.includes("/admin/tenants") ||
+            Boolean(pathname?.match(/^\/assessments\/[^/]+$/))
+              ? "p-3 sm:p-4 overflow-hidden flex flex-col min-h-0"
               : "p-4 sm:p-6 lg:p-8 overflow-y-auto"
           }`}
         >

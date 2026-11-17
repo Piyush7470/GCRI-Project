@@ -533,9 +533,9 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
   const canGoNext = currentIndex < questions.length - 1;
 
   return (
-    <div className="max-w-[1400px] mx-auto pb-28 space-y-4">
-      <div className="glass-header rounded-2xl px-4 sm:px-6 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div className="flex items-start gap-3 min-w-0">
+    <div className="h-full min-h-0 flex flex-col gap-2.5 w-full max-w-[1600px] mx-auto">
+      <div className="shrink-0 glass-header rounded-2xl px-3 sm:px-4 py-2.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <Link
             href="/assessments"
             className="p-2 rounded-xl border border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50 transition shadow-2xs shrink-0"
@@ -544,7 +544,9 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
           </Link>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="page-title font-editorial truncate">{frameworkTitle}</h1>
+              <h1 className="text-sm sm:text-base font-bold text-slate-900 font-editorial truncate">
+                {frameworkTitle}
+              </h1>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-700 text-white">
                 Full
               </span>
@@ -554,9 +556,9 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {companyLabel(session)} · Framework v{session.frameworkVersion} ·{" "}
-              {questions.length} controls
+            <p className="text-[11px] text-slate-500 truncate">
+              {companyLabel(session)} · v{session.frameworkVersion} · Control{" "}
+              {currentIndex + 1}/{questions.length} · {saveLabel}
             </p>
           </div>
         </div>
@@ -626,45 +628,48 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
         </div>
       </div>
 
-      {error && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex gap-2">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {autosaveNotice && (
-        <div
-          className={cn(
-            "p-3 rounded-lg text-xs font-medium border",
-            autosaveStatus === "saved"
-              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-              : autosaveStatus === "failed"
-                ? "bg-rose-50 text-rose-800 border-rose-200"
-                : autosaveStatus === "saving"
-                  ? "bg-sky-50 text-sky-900 border-sky-200"
-                  : "bg-slate-50 text-slate-700 border-slate-200"
+      {(error || autosaveNotice) && (
+        <div className="shrink-0 space-y-1.5">
+          {error && (
+            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
           )}
-        >
-          {autosaveNotice}
+          {autosaveNotice && (
+            <div
+              className={cn(
+                "px-3 py-2 rounded-lg text-xs font-medium border",
+                autosaveStatus === "saved"
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : autosaveStatus === "failed"
+                    ? "bg-rose-50 text-rose-800 border-rose-200"
+                    : autosaveStatus === "saving"
+                      ? "bg-sky-50 text-sky-900 border-sky-200"
+                      : "bg-slate-50 text-slate-700 border-slate-200"
+              )}
+            >
+              {autosaveNotice}
+            </div>
+          )}
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
-        <aside className="xl:col-span-3 space-y-3 xl:sticky xl:top-4">
-          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/80 flex items-center gap-2">
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-2.5">
+        <aside className="xl:col-span-3 min-h-0 flex flex-col order-2 xl:order-1">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex-1 min-h-0 flex flex-col">
+            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/80 flex items-center gap-2 shrink-0">
               <Layers className="h-3.5 w-3.5 text-indigo-600" />
               <div>
                 <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
                   Seven pillars
                 </h2>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[10px] text-slate-500">
                   Expand a pillar to jump to its controls
                 </p>
               </div>
             </div>
-            <ul className="max-h-[620px] overflow-y-auto p-2 space-y-1.5">
+            <ul className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5 [scrollbar-width:thin]">
               {pillarStats.map((p) => {
                 const active = p.pillarId === activePillarId;
                 const expanded = expandedPillarIds.has(p.pillarId);
@@ -783,13 +788,13 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
           </div>
         </aside>
 
-        <main className="xl:col-span-6">
+        <main className="xl:col-span-6 min-h-0 flex flex-col order-1 xl:order-2">
           <article
             ref={questionTopRef}
             key={currentQuestion.questionId}
-            className="assessment-question-enter bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden scroll-mt-4"
+            className="assessment-question-enter bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden flex-1 min-h-0 flex flex-col"
           >
-            <div className="px-5 sm:px-6 py-5 border-b border-slate-100 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 space-y-4">
+            <div className="px-4 sm:px-5 py-3 border-b border-slate-100 bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 space-y-2.5 shrink-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-indigo-700 text-white text-[11px] font-bold tracking-wide">
                   {currentQuestion.questionId}
@@ -804,12 +809,12 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-snug tracking-tight">
+              <div className="space-y-1">
+                <h2 className="text-sm sm:text-base font-bold text-slate-900 leading-snug tracking-tight">
                   {currentQuestion.text}
                 </h2>
                 {currentQuestion.controlDescription && (
-                  <p className="text-sm text-slate-600 leading-relaxed">
+                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed line-clamp-3">
                     {currentQuestion.controlDescription}
                   </p>
                 )}
@@ -891,9 +896,9 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
               )}
             </div>
 
-            <div className="p-5 sm:p-6 space-y-5">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 space-y-3.5 [scrollbar-width:thin]">
               {currentQuestion.testProcedure && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5">
+                <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
                     Test procedure
                   </p>
@@ -903,7 +908,7 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 </div>
               )}
 
-              <fieldset disabled={isSubmitted} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <fieldset disabled={isSubmitted} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Test status
@@ -944,34 +949,6 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 </div>
               </fieldset>
 
-              {/* Quick nav sits right after answering so assessors need not scroll */}
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-3 py-2.5">
-                <p className="text-[11px] text-slate-600">
-                  Control{" "}
-                  <span className="font-semibold text-slate-800">{currentIndex + 1}</span>
-                  {" / "}
-                  <span className="font-semibold text-slate-800">{questions.length}</span>
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => goToIndex(currentIndex - 1)}
-                    disabled={!canGoPrev}
-                    className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" /> Prev
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => goToIndex(currentIndex + 1)}
-                    disabled={!canGoNext}
-                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 inline-flex items-center gap-1 shadow-sm"
-                  >
-                    Next control <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   Auditor findings / evidence notes
@@ -980,10 +957,10 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                   disabled={isSubmitted}
                   value={currentAnswer.evidenceNotes}
                   onChange={(e) => updateCurrent({ evidenceNotes: e.target.value })}
-                  rows={4}
+                  rows={3}
                   maxLength={3000}
                   placeholder="Document observations, interviews, and evidence review notes…"
-                  className="w-full px-3 py-2.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 resize-y min-h-[96px]"
+                  className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 resize-y min-h-[72px]"
                 />
               </div>
 
@@ -1054,14 +1031,56 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
               )}
             </div>
 
+            <div className="px-3.5 sm:px-4 py-2.5 border-t border-slate-100 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
+              <p className="text-[11px] text-slate-600 truncate">
+                <span className="font-bold text-slate-900">{currentQuestion.questionId}</span>
+                <span className="mx-1.5 text-slate-300">·</span>
+                Control {currentIndex + 1}/{questions.length}
+                <span className="mx-1.5 text-slate-300">·</span>
+                <span className="font-medium text-slate-700">{saveLabel}</span>
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => goToIndex(currentIndex - 1)}
+                  disabled={!canGoPrev}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Previous
+                </button>
+                {canGoNext ? (
+                  <button
+                    type="button"
+                    onClick={() => goToIndex(currentIndex + 1)}
+                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 inline-flex items-center gap-1 shadow-md"
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={goToReview}
+                    disabled={navigatingReview || autosaveStatus === "saving"}
+                    className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md disabled:opacity-50"
+                  >
+                    {navigatingReview ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ClipboardCheck className="h-4 w-4" />
+                    )}
+                    Review
+                  </button>
+                )}
+              </div>
+            </div>
           </article>
         </main>
 
-        <aside className="xl:col-span-3 space-y-3 xl:sticky xl:top-4">
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs space-y-3">
+        <aside className="xl:col-span-3 min-h-0 flex flex-col gap-2 order-3">
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-3 shadow-xs space-y-2.5 shrink-0">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                Overall progress
+                Progress
               </p>
               <button
                 type="button"
@@ -1070,64 +1089,49 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                 className="text-[10px] font-semibold text-indigo-700 inline-flex items-center gap-1"
               >
                 <RefreshCw className={cn("h-3 w-3", progressLoading && "animate-spin")} />
-                Refresh
+                Sync
               </button>
             </div>
             {progressError && (
               <p className="text-[11px] text-rose-700">{progressError}</p>
             )}
-            <p className="text-3xl font-bold text-slate-900 tabular-nums">
-              <AnimatedNumber value={Math.round(displayPercent)} suffix="%" duration={700} />
-            </p>
-            <p className="text-[11px] text-slate-500">
-              {progress
-                ? "Authoritative backend completion"
-                : "Local preview — save to sync server progress"}
-            </p>
+            <div className="flex items-end justify-between gap-2">
+              <p className="text-2xl font-bold text-slate-900 tabular-nums leading-none">
+                <AnimatedNumber value={Math.round(displayPercent)} suffix="%" duration={700} />
+              </p>
+              <p className="text-[10px] text-slate-500 text-right">
+                {displayCompleted}/{displayTotal} done
+              </p>
+            </div>
             <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
               <div
                 className="h-full bg-indigo-500 transition-all duration-700"
                 style={{ width: `${Math.min(100, displayPercent)}%` }}
               />
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded-lg border border-slate-200 px-2.5 py-2">
-                <p className="text-slate-500 font-medium">Completed</p>
-                <p className="text-base font-bold text-emerald-700 tabular-nums">
-                  {displayCompleted}/{displayTotal}
-                </p>
+            <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+              <div className="rounded-lg border border-slate-200 px-1.5 py-1.5 text-center">
+                <p className="text-slate-500">Active</p>
+                <p className="font-bold text-blue-700 tabular-nums">{displayInProgress}</p>
               </div>
-              <div className="rounded-lg border border-slate-200 px-2.5 py-2">
-                <p className="text-slate-500 font-medium">In progress</p>
-                <p className="text-base font-bold text-blue-700 tabular-nums">
-                  {displayInProgress}
-                </p>
+              <div className="rounded-lg border border-slate-200 px-1.5 py-1.5 text-center">
+                <p className="text-slate-500">Todo</p>
+                <p className="font-bold text-slate-700 tabular-nums">{displayNotStarted}</p>
               </div>
-              <div className="rounded-lg border border-slate-200 px-2.5 py-2">
-                <p className="text-slate-500 font-medium">Not started</p>
-                <p className="text-base font-bold text-slate-700 tabular-nums">
-                  {displayNotStarted}
+              <div className="rounded-lg border border-slate-200 px-1.5 py-1.5 text-center">
+                <p className="text-slate-500 inline-flex items-center gap-0.5 justify-center w-full">
+                  <ShieldAlert className="h-3 w-3 text-rose-500" /> Exc
                 </p>
-              </div>
-              <div className="rounded-lg border border-slate-200 px-2.5 py-2">
-                <p className="text-slate-500 font-medium flex items-center gap-1">
-                  <ShieldAlert className="h-3 w-3 text-rose-500" /> Exceptions
-                </p>
-                <p className="text-base font-bold text-rose-700 tabular-nums">
-                  {displayExceptions}
-                </p>
+                <p className="font-bold text-rose-700 tabular-nums">{displayExceptions}</p>
               </div>
             </div>
-            <p className="text-[11px] text-slate-500">
-              Save status: <span className="font-semibold text-slate-800">{saveLabel}</span>
-            </p>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-3 shadow-xs">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 px-1">
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-2.5 shadow-xs flex-1 min-h-0 flex flex-col">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 px-0.5 shrink-0">
               Quick navigation
             </p>
-            <div className="flex flex-wrap gap-1.5 max-h-[280px] overflow-y-auto">
+            <div className="flex flex-wrap gap-1 content-start overflow-y-auto flex-1 min-h-0 [scrollbar-width:thin]">
               {questions.map((q, i) => {
                 const state = answersByQuestionId[q.questionId];
                 const assessed = state && isControlAssessed(state);
@@ -1141,7 +1145,7 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
                     title={q.questionId}
                     onClick={() => goToIndex(i)}
                     className={cn(
-                      "h-8 min-w-8 px-1 rounded-lg text-[10px] font-bold transition-all",
+                      "h-7 min-w-7 px-1 rounded-md text-[10px] font-bold transition-all",
                       isCurrent && "ring-2 ring-indigo-500 ring-offset-1 scale-105",
                       exception && "bg-rose-500 text-white",
                       assessed && !exception && "bg-emerald-500 text-white",
@@ -1156,56 +1160,6 @@ export function FullAssessmentPlayer({ assessmentId }: FullAssessmentPlayerProps
             </div>
           </div>
         </aside>
-      </div>
-
-      {/* Always-visible control navigator — avoids scrolling past long evidence/regulatory blocks */}
-      <div className="fixed bottom-0 inset-x-0 z-40 pointer-events-none">
-        <div className="max-w-[1400px] mx-auto px-3 sm:px-4 pb-3 sm:pb-4">
-          <div className="pointer-events-auto rounded-2xl border border-slate-200/90 bg-white/95 backdrop-blur-md shadow-[0_-8px_30px_rgba(15,23,42,0.12)] px-3 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs text-slate-600 truncate">
-                <span className="font-bold text-slate-900">{currentQuestion.questionId}</span>
-                <span className="mx-1.5 text-slate-300">·</span>
-                Control {currentIndex + 1} of {questions.length}
-                <span className="mx-1.5 text-slate-300">·</span>
-                <span className="font-medium text-slate-700">{saveLabel}</span>
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => goToIndex(currentIndex - 1)}
-                disabled={!canGoPrev}
-                className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
-              >
-                <ChevronLeft className="h-4 w-4" /> Previous
-              </button>
-              {canGoNext ? (
-                <button
-                  type="button"
-                  onClick={() => goToIndex(currentIndex + 1)}
-                  className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 inline-flex items-center gap-1 shadow-md"
-                >
-                  Next <ChevronRight className="h-4 w-4" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={goToReview}
-                  disabled={navigatingReview || autosaveStatus === "saving"}
-                  className="px-5 py-2.5 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md disabled:opacity-50"
-                >
-                  {navigatingReview ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ClipboardCheck className="h-4 w-4" />
-                  )}
-                  Review &amp; submit
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

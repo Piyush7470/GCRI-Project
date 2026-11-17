@@ -77,12 +77,12 @@ function StatPill({
   return (
     <div
       className={cn(
-        "rounded-xl border px-3 py-2.5 flex flex-col gap-0.5 min-w-[88px] transition-transform hover:scale-[1.02]",
+        "rounded-lg border px-2 py-1 flex flex-col gap-0 min-w-[64px] transition-transform hover:scale-[1.02]",
         tones[tone]
       )}
     >
-      <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">{label}</span>
-      <span className="text-xl font-bold tabular-nums leading-none">
+      <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>
+      <span className="text-sm font-bold tabular-nums leading-none">
         <AnimatedNumber value={value} duration={600} />
       </span>
     </div>
@@ -446,145 +446,144 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
   const selected = answersByQuestionId[currentQuestion.questionId];
 
   return (
-    <div className="max-w-6xl mx-auto pb-12 space-y-5">
-      {/* Top bar */}
-      <div className="glass-header rounded-2xl px-4 sm:px-6 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div className="flex items-start gap-3 min-w-0">
-          <Link
-            href="/assessments"
-            className="p-2 rounded-xl border border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50 transition shadow-2xs shrink-0"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="page-title font-editorial truncate">{frameworkTitle}</h1>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-900 text-white">
-                {session.assessmentType}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {companyLabel(session)} · Framework v{session.frameworkVersion}
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={loadAssessment}
-            className="px-3 py-2 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-white inline-flex items-center gap-1.5"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </button>
-          {!isSubmitted && (
-            <>
-              <button
-                type="button"
-                onClick={handleSaveAnswers}
-                disabled={saving}
-                className="px-3 py-2 text-xs font-semibold border border-slate-200 rounded-lg bg-white hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Save
-              </button>
-              <Link
-                href={`/assessments/${assessmentId}/review`}
-                className="px-4 py-2 text-xs font-semibold bg-gradient-to-r from-teal-600 to-blue-600 text-white rounded-lg shadow-md hover:opacity-95 inline-flex items-center gap-1.5"
-              >
-                <ClipboardCheck className="h-3.5 w-3.5" /> Review &amp; submit
-              </Link>
-            </>
-          )}
-          {isSubmitted && (
+    <div className="h-full min-h-0 flex flex-col gap-2.5 w-full max-w-[1600px] mx-auto">
+      {/* Compact chrome — fits one viewport with question + nav */}
+      <div className="shrink-0 glass-header rounded-2xl px-3 sm:px-4 py-2.5 space-y-2.5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
             <Link
-              href={`/assessments/${assessmentId}/results`}
-              className="px-4 py-2 text-xs font-semibold bg-teal-600 text-white rounded-lg inline-flex items-center gap-1.5"
+              href="/assessments"
+              className="p-2 rounded-xl border border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50 transition shadow-2xs shrink-0"
             >
-              <FileCheck2 className="h-3.5 w-3.5" /> Results
+              <ArrowLeft className="h-4 w-4" />
             </Link>
-          )}
-        </div>
-      </div>
-
-      {/* Overall progress */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-              <ListChecks className="h-3.5 w-3.5" /> Assessment progress
-            </p>
-            <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              <AnimatedNumber value={progressPercent} suffix="%" duration={700} /> complete
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-sm sm:text-base font-bold text-slate-900 font-editorial truncate">
+                  {frameworkTitle}
+                </h1>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-900 text-white">
+                  {session.assessmentType}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 truncate">
+                {companyLabel(session)} · v{session.frameworkVersion} · Q{currentIndex + 1}/
+                {questions.length}
+                {!isSubmitted && !currentCanProceed && (
+                  <span className="ml-1.5 inline-flex items-center gap-1 text-amber-700 font-medium">
+                    <Lock className="h-3 w-3" /> unlock next
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <StatPill label="Total" value={questions.length} tone="slate" />
-            <StatPill label="Answered" value={answeredCount} tone="emerald" />
-            <StatPill label="Skipped" value={skippedCount} tone="amber" />
-            <StatPill label="Remaining" value={remainingCount} tone="sky" />
-          </div>
-        </div>
-        <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
-          <div
-            className={cn(
-              "h-full rounded-full transition-all duration-700 ease-out",
-              progressPercent >= 100 ? "bg-emerald-500" : "assessment-progress-shimmer"
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <div className="hidden md:flex flex-wrap gap-1.5 mr-1">
+              <StatPill label="Total" value={questions.length} tone="slate" />
+              <StatPill label="Done" value={answeredCount} tone="emerald" />
+              <StatPill label="Skip" value={skippedCount} tone="amber" />
+              <StatPill label="Left" value={remainingCount} tone="sky" />
+            </div>
+            <button
+              type="button"
+              onClick={loadAssessment}
+              className="px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-white inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            {!isSubmitted && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveAnswers}
+                  disabled={saving}
+                  className="px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg bg-white hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  Save
+                </button>
+                <Link
+                  href={`/assessments/${assessmentId}/review`}
+                  className="px-3 py-1.5 text-xs font-semibold bg-gradient-to-r from-teal-600 to-blue-600 text-white rounded-lg shadow-md hover:opacity-95 inline-flex items-center gap-1.5"
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" /> Review
+                </Link>
+              </>
             )}
-            style={{ width: `${Math.max(progressPercent, currentAnswered ? 4 : 2)}%` }}
-          />
+            {isSubmitted && (
+              <Link
+                href={`/assessments/${assessmentId}/results`}
+                className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg inline-flex items-center gap-1.5"
+              >
+                <FileCheck2 className="h-3.5 w-3.5" /> Results
+              </Link>
+            )}
+          </div>
         </div>
-        <p className="text-[11px] text-slate-500">
-          Question{" "}
-          <span className="font-semibold text-slate-800">{currentIndex + 1}</span> of{" "}
-          <span className="font-semibold text-slate-800">{questions.length}</span>
-          {!isSubmitted && !currentCanProceed && (
-            <span className="ml-2 inline-flex items-center gap-1 text-amber-700 font-medium">
-              <Lock className="h-3 w-3" /> Answer or skip to unlock next
-            </span>
-          )}
-        </p>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-700 ease-out",
+                progressPercent >= 100 ? "bg-emerald-500" : "assessment-progress-shimmer"
+              )}
+              style={{ width: `${Math.max(progressPercent, currentAnswered ? 4 : 2)}%` }}
+            />
+          </div>
+          <p className="text-xs font-bold text-slate-800 tabular-nums shrink-0 inline-flex items-center gap-1">
+            <ListChecks className="h-3.5 w-3.5 text-slate-500" />
+            <AnimatedNumber value={progressPercent} suffix="%" duration={700} />
+          </p>
+        </div>
       </div>
 
-      {error && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex gap-2">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {navLockMessage && (
-        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-sm text-rose-800 flex items-center gap-2 animate-[assessment-slide-in_0.3s_ease-out]">
-          <Lock className="h-4 w-4 shrink-0" />
-          {navLockMessage}
-        </div>
-      )}
-
-      {saveNotice && (
-        <div
-          className={cn(
-            "p-3 rounded-lg text-xs font-medium border",
-            saveNotice.startsWith("Saved")
-              ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-              : "bg-slate-50 text-slate-700 border-slate-200"
+      {(error || navLockMessage || saveNotice) && (
+        <div className="shrink-0 space-y-1.5">
+          {error && (
+            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
           )}
-        >
-          {saveNotice}
+          {navLockMessage && (
+            <div className="px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2 animate-[assessment-slide-in_0.3s_ease-out]">
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              {navLockMessage}
+            </div>
+          )}
+          {saveNotice && (
+            <div
+              className={cn(
+                "px-3 py-2 rounded-lg text-xs font-medium border",
+                saveNotice.startsWith("Saved")
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-slate-50 text-slate-700 border-slate-200"
+              )}
+            >
+              {saveNotice}
+            </div>
+          )}
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2.5">
         {/* Sidebar — sections */}
-        <aside className="lg:col-span-4 space-y-3 lg:sticky lg:top-4">
-          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/80">
+        <aside className="lg:col-span-4 min-h-0 flex flex-col gap-2 order-2 lg:order-1">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex-1 min-h-0 flex flex-col">
+            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/80 shrink-0">
               <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
                 Pillars / sections
               </h2>
-              <p className="text-[11px] text-slate-500 mt-0.5">
+              <p className="text-[10px] text-slate-500 mt-0.5">
                 Expand a pillar to jump to its questions
               </p>
             </div>
-            <ul className="max-h-[520px] overflow-y-auto p-2 space-y-1.5">
+            <ul className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5 [scrollbar-width:thin]">
               {sections.map((section) => {
                 const stats = sectionStats(section);
                 const sectionComplete = stats.remaining === 0 && stats.skipped === 0;
@@ -735,10 +734,11 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
             </ul>
           </div>
 
-          {/* Question map */}
-          <div className="bg-white rounded-2xl border border-slate-200/90 p-3 shadow-xs">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Question map</p>
-            <div className="flex flex-wrap gap-1.5">
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-2.5 shadow-xs shrink-0 max-h-[28%] overflow-y-auto [scrollbar-width:thin]">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 px-0.5">
+              Question map
+            </p>
+            <div className="flex flex-wrap gap-1">
               {questions.map((q, i) => {
                 const answered = Boolean(answersByQuestionId[q.questionId]);
                 const skipped = skippedQuestionIds.has(q.questionId) && !answered;
@@ -751,11 +751,14 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                     title={locked ? "Locked" : q.questionId}
                     onClick={() => tryNavigateToIndex(i)}
                     className={cn(
-                      "h-8 w-8 rounded-lg text-[11px] font-bold transition-all duration-200",
-                      isCurrent && "ring-2 ring-blue-500 ring-offset-1 scale-110",
+                      "h-7 w-7 rounded-md text-[10px] font-bold transition-all duration-200",
+                      isCurrent && "ring-2 ring-blue-500 ring-offset-1 scale-105",
                       answered && "bg-emerald-500 text-white",
                       skipped && !answered && "bg-amber-400 text-white",
-                      !answered && !skipped && !locked && "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      !answered &&
+                        !skipped &&
+                        !locked &&
+                        "bg-slate-100 text-slate-700 hover:bg-slate-200",
                       locked && "bg-slate-50 text-slate-300 cursor-not-allowed"
                     )}
                   >
@@ -767,13 +770,13 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
           </div>
         </aside>
 
-        {/* Main question card */}
-        <main className="lg:col-span-8">
+        {/* Main question card — nav always visible without page scroll */}
+        <main className="lg:col-span-8 min-h-0 flex flex-col order-1 lg:order-2">
           <article
             key={currentIndex}
-            className="assessment-question-enter bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden"
+            className="assessment-question-enter bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden flex-1 min-h-0 flex flex-col"
           >
-            <div className="px-5 sm:px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+            <div className="px-4 sm:px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white shrink-0">
               <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 text-white">
                   <Sparkles className="h-3 w-3" /> Q{currentIndex + 1}
@@ -784,21 +787,23 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   {currentQuestion.section || currentQuestion.pillarName}
                 </span>
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 mt-3 leading-snug">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 mt-2 leading-snug">
                 {currentQuestion.text}
               </h2>
               {currentSkipped && (
-                <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
+                <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5">
                   <SkipForward className="h-3.5 w-3.5" /> Skipped — select an answer when ready
                 </p>
               )}
               {currentQuestion.helpText && (
-                <p className="text-xs text-slate-500 mt-2">{currentQuestion.helpText}</p>
+                <p className="text-[11px] text-slate-500 mt-1.5 line-clamp-2">
+                  {currentQuestion.helpText}
+                </p>
               )}
             </div>
 
-            <div className="p-5 sm:p-6 space-y-2.5">
-              <fieldset disabled={isSubmitted} className="space-y-2.5">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 [scrollbar-width:thin]">
+              <fieldset disabled={isSubmitted} className="space-y-2">
                 <legend className="sr-only">Choose one answer</legend>
                 {(currentQuestion.responseOptions || [])
                   .slice()
@@ -809,7 +814,7 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                       <label
                         key={opt.code}
                         className={cn(
-                          "flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all duration-200",
+                          "flex items-start gap-3 p-3 sm:p-3.5 rounded-xl border-2 cursor-pointer transition-all duration-200",
                           checked
                             ? "border-blue-600 bg-blue-50/70 shadow-sm assessment-option-selected"
                             : "border-slate-200 hover:border-blue-300 hover:bg-slate-50/80",
@@ -820,7 +825,9 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                           type="radio"
                           name={`q-${currentQuestion.questionId}`}
                           checked={checked}
-                          onChange={() => handleSelectOption(currentQuestion.questionId, opt.code)}
+                          onChange={() =>
+                            handleSelectOption(currentQuestion.questionId, opt.code)
+                          }
                           className="mt-1 accent-blue-600"
                         />
                         <span className="text-sm text-slate-800 leading-relaxed">{opt.label}</span>
@@ -830,17 +837,17 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
               </fieldset>
             </div>
 
-            <div className="px-5 sm:px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <p className="text-xs text-slate-500 flex items-center gap-1.5">
+            <div className="px-3.5 sm:px-5 py-2.5 border-t border-slate-100 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
+              <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
                 {!currentCanProceed && !isSubmitted ? (
                   <>
                     <CircleDashed className="h-3.5 w-3.5 text-amber-500" />
-                    Pick an option or <strong className="text-slate-700">Skip</strong> to continue
+                    Pick an option or <strong className="text-slate-700">Skip</strong>
                   </>
                 ) : currentSkipped ? (
                   <>
                     <SkipForward className="h-3.5 w-3.5 text-amber-600" />
-                    Skipped — use <strong className="text-slate-700">Next</strong> or answer above
+                    Skipped — use <strong className="text-slate-700">Next</strong>
                   </>
                 ) : (
                   <>
@@ -854,7 +861,7 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   type="button"
                   onClick={() => tryNavigateToIndex(currentIndex - 1)}
                   disabled={!canGoPrev}
-                  className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
                 >
                   <ChevronLeft className="h-4 w-4" /> Previous
                 </button>
@@ -862,7 +869,7 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   <button
                     type="button"
                     onClick={handleSkipCurrentQuestion}
-                    className="px-4 py-2.5 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 inline-flex items-center gap-1.5 transition-colors"
+                    className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 inline-flex items-center gap-1.5 transition-colors"
                   >
                     <SkipForward className="h-4 w-4" /> Skip
                   </button>
@@ -872,7 +879,7 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   onClick={() => tryNavigateToIndex(currentIndex + 1)}
                   disabled={!canGoNext}
                   className={cn(
-                    "px-5 py-2.5 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
+                    "px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
                     canGoNext
                       ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
                       : "bg-slate-200 text-slate-500 cursor-not-allowed"
