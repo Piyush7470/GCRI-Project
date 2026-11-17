@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { AssessmentSession } from "../models/AssessmentSession.js";
 import { Company } from "../models/Company.js";
+import { Tenant } from "../models/Tenant.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
 
@@ -143,10 +144,14 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
       ...sessionFilter,
       status: { $nin: ["Submitted", "InProgress"] },
     }),
-    Company.find(companyFilter).select("name activePlan status createdAt").lean(),
+    Company.find(companyFilter)
+      .select("name domain industry activePlan status createdAt tenantId verificationStatus")
+      .lean(),
     AssessmentSession.find(sessionFilter)
-      .select("companyId conductedByUserId status assessmentType scoreSnapshot answers createdAt submittedAt updatedAt")
-      .populate("companyId", "name activePlan status")
+      .select(
+        "companyId conductedByUserId status assessmentType scoreSnapshot answers createdAt submittedAt updatedAt"
+      )
+      .populate("companyId", "name activePlan status tenantId")
       .populate("conductedByUserId", "name email")
       .lean(),
     AuditLog.find(auditFilter).sort({ timestamp: -1 }).limit(12).lean(),
@@ -158,7 +163,7 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     })
       .select("timestamp action")
       .lean(),
-    User.find(auditorFilter).select("name email").limit(50).lean(),
+    User.find(auditorFilter).select("name email").limit(100).lean(),
   ]);
 
   // Compliance score from submitted sessions with scoreSnapshot
@@ -323,83 +328,241 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     percentage: p.total > 0 ? Math.round((p.complete / p.total) * 100) : 0,
   }));
 
-  // Top organizations by compliance
-  const orgAgg = new Map<
-    string,
-    { name: string; assessments: number; scoreSum: number; scored: number; plan: string; status: string }
-  >();
+  // Per-organization session rollups (done / pending / exceptions / pillars)
+  type OrgAggRow = {
+    name: string;
+    assessments: number;
+    done: number;
+    pending: number;
+    scoreSum: number;
+    scored: number;
+    plan: string;
+    status: string;
+    exceptions: number;
+    pillars: Map<string, { name: string; complete: number; total: number; exceptions: number }>;
+  };
+  const orgAgg = new Map<string, OrgAggRow>();
   for (const s of sessionsForScores) {
-    const org = s.companyId as { _id?: Types.ObjectId; name?: string; activePlan?: string; status?: string } | null;
+    const org = s.companyId as {
+      _id?: Types.ObjectId;
+      name?: string;
+      activePlan?: string;
+      status?: string;
+    } | null;
     const id = org?._id?.toString() || String(s.companyId);
     if (!id) continue;
     if (!orgAgg.has(id)) {
       orgAgg.set(id, {
         name: org?.name || "Organization",
         assessments: 0,
+        done: 0,
+        pending: 0,
         scoreSum: 0,
         scored: 0,
         plan: org?.activePlan || "Bronze",
         status: org?.status || "Active",
+        exceptions: 0,
+        pillars: new Map(),
       });
     }
     const row = orgAgg.get(id)!;
     row.assessments++;
+    if (s.status === "Submitted") row.done++;
+    else row.pending++;
     if (s.scoreSnapshot?.overallPercentage != null) {
       row.scoreSum += s.scoreSnapshot.overallPercentage;
       row.scored++;
     }
+    for (const a of s.answers || []) {
+      const isException =
+        a.exceptionStatus === "ExceptionNoted" || a.selectedOptionCode === "EXCEPTION_NOTED";
+      if (isException) row.exceptions++;
+      if (a.pillarId === "ai-landscape" || a.pillarNumber === 0) continue;
+      const matched = CANONICAL_PILLARS.find(
+        (p) =>
+          p.pillarId === a.pillarId ||
+          p.key.toLowerCase() === (a.pillarId || "").toLowerCase()
+      );
+      if (!matched) continue;
+      if (!row.pillars.has(matched.key)) {
+        row.pillars.set(matched.key, {
+          name: matched.name,
+          complete: 0,
+          total: 0,
+          exceptions: 0,
+        });
+      }
+      const pillar = row.pillars.get(matched.key)!;
+      pillar.total++;
+      if (isException) pillar.exceptions++;
+      const answered =
+        a.testStatus === "Complete" ||
+        !!a.selectedOptionCode ||
+        a.exceptionStatus === "NoExceptionNoted" ||
+        a.exceptionStatus === "ExceptionNoted";
+      if (answered) pillar.complete++;
+    }
   }
-  const topOrganizations = Array.from(orgAgg.entries())
-    .map(([id, row]) => ({
-      _id: id,
+
+  const companyIds = companies.map((c) => c._id);
+  const tenantIds = [
+    ...new Set(
+      companies
+        .map((c) => (c.tenantId ? String(c.tenantId) : null))
+        .filter((id): id is string => !!id)
+    ),
+  ];
+
+  const [customerCounts, tenants] = await Promise.all([
+    companyIds.length
+      ? User.aggregate<{ _id: Types.ObjectId; count: number }>([
+          {
+            $match: {
+              companyId: { $in: companyIds },
+              role: { $nin: ["SuperAdmin"] },
+            },
+          },
+          { $group: { _id: "$companyId", count: { $sum: 1 } } },
+        ])
+      : Promise.resolve([]),
+    tenantIds.length
+      ? Tenant.find({ _id: { $in: tenantIds } }).select("name status").lean()
+      : Promise.resolve([]),
+  ]);
+
+  const customersByCompany = new Map(
+    customerCounts.map((r) => [String(r._id), r.count] as const)
+  );
+  const tenantById = new Map(
+    tenants.map((t) => [String(t._id), { name: t.name, status: t.status }] as const)
+  );
+  const companiesPerTenant = new Map<string, number>();
+  for (const c of companies) {
+    if (!c.tenantId) continue;
+    const tid = String(c.tenantId);
+    companiesPerTenant.set(tid, (companiesPerTenant.get(tid) || 0) + 1);
+  }
+
+  const linkedClients = companies.filter((c) => !!c.tenantId).length;
+  const standaloneOrganizations = companies.length - linkedClients;
+  const clientOrganizationSplit = {
+    clients: linkedClients,
+    organizations: standaloneOrganizations,
+    totalAccounts: companies.length,
+    uniqueTenants: tenantIds.length,
+    totalCustomers: Array.from(customersByCompany.values()).reduce((s, n) => s + n, 0),
+  };
+
+  const organizationAccounts = companies
+    .map((c) => {
+      const id = String(c._id);
+      const stats = orgAgg.get(id);
+      const tenantId = c.tenantId ? String(c.tenantId) : null;
+      const tenantMeta = tenantId ? tenantById.get(tenantId) : undefined;
+      const accountType = tenantId ? ("Client" as const) : ("Organization" as const);
+      const pillarWise = CANONICAL_PILLARS.map((p) => {
+        const bucket = stats?.pillars.get(p.key);
+        return {
+          key: p.key,
+          name: p.name,
+          percentage:
+            bucket && bucket.total > 0
+              ? Math.round((bucket.complete / bucket.total) * 100)
+              : 0,
+          exceptions: bucket?.exceptions || 0,
+        };
+      });
+      return {
+        _id: id,
+        name: c.name,
+        domain: c.domain || "",
+        industry: c.industry || "",
+        accountType,
+        tenantId,
+        tenantName: tenantMeta?.name || null,
+        tenantStatus: tenantMeta?.status || null,
+        tenantsCount: tenantId ? companiesPerTenant.get(tenantId) || 1 : 0,
+        customersCount: customersByCompany.get(id) || 0,
+        assessmentsDone: stats?.done || 0,
+        assessmentsPending: stats?.pending || 0,
+        assessmentVolume: stats?.assessments || 0,
+        exceptionsVolume: stats?.exceptions || 0,
+        complianceScore:
+          stats && stats.scored > 0 ? Math.round(stats.scoreSum / stats.scored) : 0,
+        activePlan: c.activePlan || "Bronze",
+        status: c.status || "Active",
+        verificationStatus: c.verificationStatus || "Pending",
+        pillarWise,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.assessmentVolume - a.assessmentVolume ||
+        b.complianceScore - a.complianceScore ||
+        a.name.localeCompare(b.name)
+    );
+
+  const topOrganizations = organizationAccounts
+    .map((row) => ({
+      _id: row._id,
       name: row.name,
-      assessmentCount: row.assessments,
-      complianceScore: row.scored > 0 ? Math.round(row.scoreSum / row.scored) : 0,
-      activePlan: row.plan,
+      assessmentCount: row.assessmentVolume,
+      complianceScore: row.complianceScore,
+      activePlan: row.activePlan,
       status: row.status,
     }))
     .sort((a, b) => b.complianceScore - a.complianceScore || b.assessmentCount - a.assessmentCount)
     .slice(0, 5);
 
-  // Auditor performance
+  // Auditor performance (full list for modal pagination; charts slice on the client)
   const auditorAgg = new Map<
     string,
-    { name: string; email: string; assigned: number; completed: number }
+    { id: string; name: string; email: string; assigned: number; completed: number; pending: number }
   >();
   for (const a of auditors) {
     auditorAgg.set(String(a._id), {
+      id: String(a._id),
       name: a.name || "Auditor",
       email: a.email || "",
       assigned: 0,
       completed: 0,
+      pending: 0,
     });
   }
   for (const s of sessionsForScores) {
-    const auditor = s.conductedByUserId as { _id?: Types.ObjectId; name?: string; email?: string } | null;
+    const auditor = s.conductedByUserId as {
+      _id?: Types.ObjectId;
+      name?: string;
+      email?: string;
+    } | null;
     const id = auditor?._id?.toString();
     if (!id) continue;
     if (!auditorAgg.has(id)) {
       auditorAgg.set(id, {
+        id,
         name: auditor?.name || "Auditor",
         email: auditor?.email || "",
         assigned: 0,
         completed: 0,
+        pending: 0,
       });
     }
     const row = auditorAgg.get(id)!;
     row.assigned++;
     if (s.status === "Submitted") row.completed++;
+    else row.pending++;
   }
   const auditorPerformance = Array.from(auditorAgg.values())
     .map((row) => ({
+      id: row.id,
       name: row.name,
       email: row.email,
       assigned: row.assigned,
       completed: row.completed,
+      pending: row.pending,
       completionRate: row.assigned > 0 ? Math.round((row.completed / row.assigned) * 100) : 0,
     }))
-    .sort((a, b) => b.completionRate - a.completionRate || b.assigned - a.assigned)
-    .slice(0, 6);
+    .sort((a, b) => b.completionRate - a.completionRate || b.assigned - a.assigned);
 
   const recentOrganizations = [...companies]
     .sort((a, b) => {
@@ -552,7 +715,7 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
       totalOrganizations: {
         value: totalOrganizations,
         deltaPct: orgsDelta,
-        hint: "Client tenants",
+        hint: `${clientOrganizationSplit.clients} clients · ${clientOrganizationSplit.organizations} orgs · ${clientOrganizationSplit.uniqueTenants} tenants`,
       },
       totalAssessments: {
         value: totalAssessments,
@@ -596,6 +759,8 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     },
     complianceByPillar,
     topOrganizations,
+    organizationAccounts,
+    clientOrganizationSplit,
     auditorPerformance,
     assessmentPipeline,
     recentOrganizations,

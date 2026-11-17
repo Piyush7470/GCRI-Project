@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { TableBodySkeletonRows } from "@/components/shared/PageSkeletons";
 import {
   UserCheck,
@@ -36,12 +37,9 @@ import { MetricListModal, MetricListRow } from "@/components/shared/MetricListMo
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
 
 export default function AuditorMappingsPage() {
-  const { user: currentUser, isSuperAdmin, isOrgAdmin } = useAuth();
-  const userCompanyId = currentUser?.companyId
-    ? typeof currentUser.companyId === "string"
-      ? currentUser.companyId
-      : currentUser.companyId._id
-    : "";
+  const router = useRouter();
+  const { loading: authLoading, isSuperAdmin, isOrgAdmin } = useAuth();
+  const canManageMappings = isOrgAdmin && !isSuperAdmin;
   // Live State
   const [mappings, setMappings] = useState<AuditorOrganizationMapping[]>([]);
   const [assessors, setAssessors] = useState<UserType[]>([]);
@@ -110,14 +108,17 @@ export default function AuditorMappingsPage() {
   // Load Dropdown Options (Assessors & Organizations)
   const fetchDropdownOptions = useCallback(async () => {
     try {
-      const [usersRes, orgsRes] = await Promise.all([
+      const [auditorsRes, assessorsRes, orgsRes] = await Promise.all([
+        userService.getUsers({ limit: 100, role: "Auditor" }),
         userService.getUsers({ limit: 100, role: "Assessor" }),
         companyService.getCompanies({ limit: 100 }),
       ]);
 
-      if (usersRes?.data) {
-        setAssessors(usersRes.data);
+      const byId = new Map<string, UserType>();
+      for (const u of [...(auditorsRes?.data || []), ...(assessorsRes?.data || [])]) {
+        byId.set(u._id, u);
       }
+      setAssessors(Array.from(byId.values()));
       if (orgsRes?.data) {
         setCompanies(orgsRes.data);
       }
@@ -127,12 +128,21 @@ export default function AuditorMappingsPage() {
   }, []);
 
   useEffect(() => {
-    fetchDropdownOptions();
-  }, [fetchDropdownOptions]);
+    if (authLoading) return;
+    if (isSuperAdmin || !isOrgAdmin) {
+      router.replace("/dashboard");
+    }
+  }, [authLoading, isSuperAdmin, isOrgAdmin, router]);
 
   useEffect(() => {
+    if (!canManageMappings) return;
+    fetchDropdownOptions();
+  }, [canManageMappings, fetchDropdownOptions]);
+
+  useEffect(() => {
+    if (!canManageMappings) return;
     fetchMappings();
-  }, [fetchMappings]);
+  }, [canManageMappings, fetchMappings]);
 
   // Client-side quick filter on search string
   const filteredMappings = useMemo(() => {
@@ -251,10 +261,24 @@ export default function AuditorMappingsPage() {
           ? "Client Organizations"
           : "Total Mappings";
 
+  if (authLoading || !canManageMappings) {
+    return (
+      <div className="max-w-2xl mx-auto my-12 surface-panel p-8 text-center space-y-4 shadow-xs">
+        <div className="h-12 w-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+          <Shield className="h-6 w-6" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-900">Tenant Admin Authorization Required</h2>
+        <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+          Auditor mapping is managed by Tenant Admins for organizations in their workspace.
+        </p>
+      </div>
+    );
+  }
+
   // Handle Create Assignment
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetOrgId = !isSuperAdmin && userCompanyId ? userCompanyId : createForm.organizationId;
+    const targetOrgId = createForm.organizationId;
     if (!createForm.auditorId || !targetOrgId) {
       setCreateError("Please select both a certified assessor and a client organization.");
       return;
@@ -320,7 +344,7 @@ export default function AuditorMappingsPage() {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Assign certified assessors to client organizations and manage their active assessment scopes.
+            Tenant Admin module — assign assessors to client organizations in your workspace and manage their scopes.
           </p>
         </div>
 
@@ -781,11 +805,10 @@ export default function AuditorMappingsPage() {
                   Select Client Organization <span className="text-rose-500">*</span>
                 </label>
                 <select
-                  disabled={!isSuperAdmin && Boolean(userCompanyId)}
-                  value={!isSuperAdmin && userCompanyId ? userCompanyId : createForm.organizationId}
+                  value={createForm.organizationId}
                   onChange={(e) => setCreateForm({ ...createForm, organizationId: e.target.value })}
                   required
-                  className="w-full px-3 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 text-xs transition disabled:bg-slate-100 disabled:text-slate-600 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 text-xs transition"
                 >
                   <option value="">-- Choose a Client Organization --</option>
                   {companies.map((c) => (
@@ -794,15 +817,9 @@ export default function AuditorMappingsPage() {
                     </option>
                   ))}
                 </select>
-                {!isSuperAdmin && userCompanyId ? (
-                  <p className="text-[10.5px] text-purple-600 font-medium mt-1">
-                    Organization Admin: Scoped strictly to your organization.
-                  </p>
-                ) : (
-                  <p className="text-[10.5px] text-slate-400 mt-1">
-                    The client organization where the assessor will perform audit verifications.
-                  </p>
-                )}
+                <p className="text-[10.5px] text-slate-400 mt-1">
+                  Organizations in your tenant workspace where the assessor can perform audit verifications.
+                </p>
               </div>
 
               {/* Modal Actions */}

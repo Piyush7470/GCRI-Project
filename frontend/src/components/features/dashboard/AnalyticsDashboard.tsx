@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Area,
@@ -43,6 +43,8 @@ import {
 } from "@/lib/dashboardDownloads";
 import { getApiErrorMessage } from "@/lib/authUser";
 import { useToast } from "@/context/ToastContext";
+import { MetricListModal, MetricListRow } from "@/components/shared/MetricListModal";
+import { userService } from "@/services/user.service";
 
 const RANGES: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
 const STATUS_COLORS = ["#10b981", "#3b82f6", "#94a3b8"];
@@ -188,6 +190,63 @@ export function AnalyticsDashboard({
   const toast = useToast();
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
+  const [metricModal, setMetricModal] = useState<
+    | null
+    | "users"
+    | "auditors"
+    | "orgs"
+    | "assessments"
+    | "compliance"
+    | "risks"
+    | "auditorPerf"
+    | "pipeline"
+  >(null);
+  const [userModalRows, setUserModalRows] = useState<MetricListRow[]>([]);
+  const [userModalLoading, setUserModalLoading] = useState(false);
+
+  useEffect(() => {
+    if (metricModal !== "users" && metricModal !== "auditors") return;
+    let cancelled = false;
+    (async () => {
+      setUserModalLoading(true);
+      try {
+        const res = await userService.getUsers({
+          limit: 200,
+          ...(metricModal === "auditors" ? { role: "Assessor" } : {}),
+          ...(analyticsCompanyId ? { companyId: analyticsCompanyId } : {}),
+        });
+        const list = Array.isArray(res.data) ? res.data : [];
+        if (cancelled) return;
+        setUserModalRows(
+          list.map((u) => ({
+            id: u._id,
+            title: u.name || u.email,
+            subtitle: u.email,
+            meta:
+              typeof u.companyId === "object" && u.companyId?.name
+                ? `${u.role} · ${u.companyId.name}`
+                : u.role,
+            badge: u.status,
+            badgeTone: u.status === "Active" ? "success" : "warning",
+            imageUrl: u.avatar?.url,
+            imageName: u.name,
+            imageVariant: "avatar" as const,
+            href: "/admin/users",
+          }))
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setUserModalRows([]);
+          toast.error(getApiErrorMessage(err, "Could not load users"));
+        }
+      } finally {
+        if (!cancelled) setUserModalLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [metricModal, analyticsCompanyId, toast]);
 
   const handleExport = async (format: "pdf" | "xlsx") => {
     if (exporting) return;
@@ -302,6 +361,199 @@ export function AnalyticsDashboard({
         },
       ]
     : [];
+
+  const orgAccounts = data?.organizationAccounts ?? [];
+  const split = data?.clientOrganizationSplit;
+
+  const orgModalRows: MetricListRow[] = orgAccounts.map((org) => {
+    const pillarSummary = org.pillarWise
+      .filter((p) => p.percentage > 0 || p.exceptions > 0)
+      .map((p) => `${p.key} ${p.percentage}%${p.exceptions ? ` · ${p.exceptions} exc` : ""}`)
+      .join(" · ");
+    return {
+      id: org._id,
+      title: org.name,
+      subtitle: [
+        org.accountType,
+        org.domain || null,
+        org.tenantName ? `Tenant: ${org.tenantName}` : "No tenant link",
+        org.activePlan,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      meta: `Customers ${org.customersCount} · Tenants under account ${org.tenantsCount} · Assessments ${org.assessmentsDone} done / ${org.assessmentsPending} pending · Volume ${org.assessmentVolume} · Exceptions ${org.exceptionsVolume} · Compliance ${org.complianceScore}%`,
+      details: pillarSummary
+        ? [`Pillar-wise: ${pillarSummary}`]
+        : ["Pillar-wise: no scored controls yet"],
+      badge: org.accountType,
+      badgeTone: org.accountType === "Client" ? "info" : "neutral",
+      imageName: org.name,
+      imageVariant: "logo",
+      href: `/organizations/${org._id}`,
+    };
+  });
+
+  const auditorModalRows: MetricListRow[] = (data?.auditorPerformance ?? []).map((a, idx) => ({
+    id: a.id || `${a.email}-${idx}`,
+    title: a.name,
+    subtitle: a.email,
+    meta: `Assigned ${a.assigned} · Completed ${a.completed} · Pending ${a.pending ?? Math.max(0, a.assigned - a.completed)} · Rate ${a.completionRate}%`,
+    badge: `${a.completionRate}%`,
+    badgeTone:
+      a.completionRate >= 70 ? "success" : a.completionRate >= 40 ? "warning" : "danger",
+    imageName: a.name,
+    imageVariant: "avatar",
+    href: "/admin/assessors",
+  }));
+
+  const assessmentModalRows: MetricListRow[] = data
+    ? [
+        {
+          id: "pipeline-completed",
+          title: "Completed assessments",
+          subtitle: `${data.assessmentPipeline.completed} sessions · ${data.assessmentPipeline.completedPct}% of portfolio`,
+          badge: "Done",
+          badgeTone: "success",
+          href: "/assessments",
+        },
+        {
+          id: "pipeline-progress",
+          title: "In progress",
+          subtitle: `${data.assessmentPipeline.inProgress} sessions · ${data.assessmentPipeline.inProgressPct}%`,
+          badge: "Active",
+          badgeTone: "info",
+          href: "/assessments",
+        },
+        {
+          id: "pipeline-pending",
+          title: "Not started / pending",
+          subtitle: `${data.assessmentPipeline.notStarted} sessions · ${data.assessmentPipeline.notStartedPct}%`,
+          badge: "Pending",
+          badgeTone: "warning",
+          href: "/assessments",
+        },
+        {
+          id: "type-light",
+          title: "Light assessments",
+          subtitle: `${data.assessmentTypeMix.light} of ${data.assessmentTypeMix.total} total`,
+          badge: "Light",
+          badgeTone: "neutral",
+          href: "/assessments",
+        },
+        {
+          id: "type-full",
+          title: "Full assessments",
+          subtitle: `${data.assessmentTypeMix.full} of ${data.assessmentTypeMix.total} total`,
+          badge: "Full",
+          badgeTone: "info",
+          href: "/assessments",
+        },
+        ...orgAccounts.map((org) => ({
+          id: `acct-assess-${org._id}`,
+          title: org.name,
+          subtitle: `${org.accountType} · ${org.assessmentsDone} done · ${org.assessmentsPending} pending`,
+          meta: `Assessment volume ${org.assessmentVolume} · Exceptions ${org.exceptionsVolume}`,
+          badge: org.status,
+          badgeTone: (org.status === "Active" ? "success" : "warning") as MetricListRow["badgeTone"],
+          href: `/organizations/${org._id}`,
+        })),
+      ]
+    : [];
+
+  const complianceModalRows: MetricListRow[] = data
+    ? [
+        {
+          id: "overall-compliance",
+          title: "Average submitted maturity",
+          subtitle: `${data.kpis.complianceScore.value}% across scored sessions`,
+          badge: `${data.kpis.complianceScore.value}%`,
+          badgeTone:
+            data.kpis.complianceScore.value >= 70
+              ? "success"
+              : data.kpis.complianceScore.value >= 45
+                ? "warning"
+                : "danger",
+        },
+        ...data.complianceByPillar.map((p) => ({
+          id: `pillar-${p.key}`,
+          title: `${p.key} · ${p.name}`,
+          subtitle: `Portfolio completion ${p.percentage}%`,
+          badge: `${p.percentage}%`,
+          badgeTone:
+            p.percentage >= 70 ? "success" : p.percentage >= 40 ? "warning" : "danger",
+        })),
+        ...orgAccounts.map((org) => ({
+          id: `acct-comp-${org._id}`,
+          title: org.name,
+          subtitle: `Account compliance ${org.complianceScore}%`,
+          meta: org.pillarWise
+            .map((p) => `${p.key} ${p.percentage}%`)
+            .join(" · "),
+          badge: org.accountType,
+          badgeTone: "info" as const,
+          href: `/organizations/${org._id}`,
+        })),
+      ]
+    : [];
+
+  const riskModalRows: MetricListRow[] = data
+    ? [
+        {
+          id: "risk-critical",
+          title: "Critical exceptions",
+          subtitle: `${data.riskSeverity.critical} open`,
+          badge: "Critical",
+          badgeTone: "danger",
+        },
+        {
+          id: "risk-high",
+          title: "High exceptions",
+          subtitle: `${data.riskSeverity.high} open`,
+          badge: "High",
+          badgeTone: "warning",
+        },
+        {
+          id: "risk-medium",
+          title: "Medium exceptions",
+          subtitle: `${data.riskSeverity.medium} open`,
+          badge: "Medium",
+          badgeTone: "neutral",
+        },
+        {
+          id: "risk-low",
+          title: "Low exceptions",
+          subtitle: `${data.riskSeverity.low} open`,
+          badge: "Low",
+          badgeTone: "success",
+        },
+        ...orgAccounts
+          .filter((o) => o.exceptionsVolume > 0)
+          .map((org) => ({
+            id: `acct-risk-${org._id}`,
+            title: org.name,
+            subtitle: `${org.exceptionsVolume} exception(s) · ${org.accountType}`,
+            meta: org.pillarWise
+              .filter((p) => p.exceptions > 0)
+              .map((p) => `${p.key}: ${p.exceptions}`)
+              .join(" · ") || "No pillar-tagged exceptions",
+            badge: String(org.exceptionsVolume),
+            badgeTone: "danger" as const,
+            href: `/organizations/${org._id}`,
+          })),
+      ]
+    : [];
+
+  const openMetric = (
+    key:
+      | "users"
+      | "auditors"
+      | "orgs"
+      | "assessments"
+      | "compliance"
+      | "risks"
+      | "auditorPerf"
+      | "pipeline"
+  ) => setMetricModal(key);
 
   return (
     <div className="space-y-5">
@@ -422,11 +674,25 @@ export function AnalyticsDashboard({
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
             {kpiCards.map((card) => {
               const Icon = card.icon;
+              const modalKey =
+                card.key === "users"
+                  ? "users"
+                  : card.key === "auditors"
+                    ? "auditors"
+                    : card.key === "orgs"
+                      ? "orgs"
+                      : card.key === "assessments"
+                        ? "assessments"
+                        : card.key === "compliance"
+                          ? "compliance"
+                          : "risks";
               return (
-                <div
+                <button
                   key={card.key}
+                  type="button"
+                  onClick={() => openMetric(modalKey)}
                   className={cn(
-                    "rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-xs",
+                    "rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
                     card.kpi.outlier && "border-rose-200 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
                   )}
                 >
@@ -443,10 +709,11 @@ export function AnalyticsDashboard({
                     {card.kpi.value}
                     {card.kpi.suffix || ""}
                   </p>
-                  <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">
+                  <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">
                     {card.kpi.hint || `vs prior ${range}`}
                   </p>
-                </div>
+                  <p className="text-[10px] font-semibold text-teal-700 mt-1.5">View details →</p>
+                </button>
               );
             })}
           </div>
@@ -777,13 +1044,27 @@ export function AnalyticsDashboard({
               className="xl:col-span-4"
               title="Organization Compliance (Top 5)"
               subtitle="Highest maturity scores among tenants"
+              action={
+                <button
+                  type="button"
+                  onClick={() => openMetric("orgs")}
+                  className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                >
+                  All accounts
+                </button>
+              }
             >
               <div className="space-y-3">
                 {data.topOrganizations.length === 0 ? (
                   <p className="text-xs text-slate-500">No scored organizations yet.</p>
                 ) : (
-                  data.topOrganizations.map((org, i) => (
-                    <div key={org._id} className="space-y-1.5">
+                  data.topOrganizations.map((org) => (
+                    <button
+                      key={org._id}
+                      type="button"
+                      onClick={() => openMetric("orgs")}
+                      className="space-y-1.5 w-full text-left rounded-lg hover:bg-slate-50 px-1 py-0.5 transition"
+                    >
                       <div className="flex items-center justify-between gap-2 text-xs">
                         <div className="min-w-0">
                           <p className="font-semibold text-slate-800 truncate">{org.name}</p>
@@ -801,7 +1082,7 @@ export function AnalyticsDashboard({
                           style={{ width: `${org.complianceScore}%` }}
                         />
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -811,13 +1092,27 @@ export function AnalyticsDashboard({
               className="xl:col-span-4"
               title="Auditor Performance"
               subtitle="Assigned vs completed assessment workload"
+              action={
+                <button
+                  type="button"
+                  onClick={() => openMetric("auditorPerf")}
+                  className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                >
+                  View all
+                </button>
+              }
             >
               <div className="space-y-3">
                 {data.auditorPerformance.length === 0 ? (
                   <p className="text-xs text-slate-500">No auditor activity yet.</p>
                 ) : (
-                  data.auditorPerformance.map((a) => (
-                    <div key={`${a.email}-${a.name}`} className="flex items-center gap-3">
+                  data.auditorPerformance.slice(0, 6).map((a) => (
+                    <button
+                      key={`${a.email}-${a.name}`}
+                      type="button"
+                      onClick={() => openMetric("auditorPerf")}
+                      className="flex items-center gap-3 w-full text-left rounded-xl hover:bg-slate-50 px-1 py-0.5 transition"
+                    >
                       <div className="h-8 w-8 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
                         {initials(a.name) || "A"}
                       </div>
@@ -830,6 +1125,7 @@ export function AnalyticsDashboard({
                         </div>
                         <p className="text-[10px] text-slate-500 mb-1">
                           {a.completed}/{a.assigned} completed
+                          {typeof a.pending === "number" ? ` · ${a.pending} pending` : ""}
                         </p>
                         <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                           <div
@@ -838,7 +1134,7 @@ export function AnalyticsDashboard({
                           />
                         </div>
                       </div>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -850,6 +1146,15 @@ export function AnalyticsDashboard({
               className="xl:col-span-4"
               title="Assessment Pipeline"
               subtitle="Completion mix across the portfolio"
+              action={
+                <button
+                  type="button"
+                  onClick={() => openMetric("pipeline")}
+                  className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                >
+                  View details
+                </button>
+              }
             >
               <div className="space-y-4">
                 <div>
@@ -874,7 +1179,11 @@ export function AnalyticsDashboard({
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => openMetric("pipeline")}
+                  className="grid grid-cols-3 gap-2 text-center w-full"
+                >
                   {[
                     ["Completed", data.assessmentPipeline.completed, "text-emerald-700 bg-emerald-50"],
                     ["In Progress", data.assessmentPipeline.inProgress, "text-blue-700 bg-blue-50"],
@@ -885,7 +1194,7 @@ export function AnalyticsDashboard({
                       <p className="text-[10px] font-semibold">{label}</p>
                     </div>
                   ))}
-                </div>
+                </button>
               </div>
             </ChartCard>
 
@@ -958,6 +1267,95 @@ export function AnalyticsDashboard({
               </div>
             </ChartCard>
           </div>
+
+          <MetricListModal
+            open={metricModal === "users" || metricModal === "auditors"}
+            onClose={() => setMetricModal(null)}
+            title={
+              metricModal === "auditors"
+                ? isAuditor
+                  ? "Active Assessor"
+                  : "Accredited Auditors"
+                : isAuditor
+                  ? "Scoped Users"
+                  : "Platform Users"
+            }
+            description={
+              userModalLoading
+                ? "Loading directory…"
+                : "Paginated directory — open a row for user management"
+            }
+            rows={userModalRows}
+            emptyMessage={userModalLoading ? "Loading…" : "No users found."}
+            footerHref="/admin/users"
+            footerLabel="Open Users"
+            size="lg"
+          />
+
+          <MetricListModal
+            open={metricModal === "orgs"}
+            onClose={() => setMetricModal(null)}
+            title="Client Organizations"
+            description={
+              split
+                ? `${split.clients} linked clients · ${split.organizations} standalone orgs · ${split.uniqueTenants} tenants · ${split.totalCustomers} customers — per-account customers, tenants, assessments, exceptions, and pillar scores`
+                : "Per-account customers, tenants, assessments done/pending, exception volume, and pillar-wise maturity"
+            }
+            rows={orgModalRows}
+            emptyMessage="No client organizations in scope."
+            footerHref="/organizations"
+            footerLabel="Open Organizations"
+            size="xl"
+            pageSize={6}
+          />
+
+          <MetricListModal
+            open={metricModal === "assessments" || metricModal === "pipeline"}
+            onClose={() => setMetricModal(null)}
+            title={metricModal === "pipeline" ? "Assignment Pipeline" : "Total Assessments"}
+            description="Pipeline stages plus per-account assessment volume (done / pending)"
+            rows={assessmentModalRows}
+            emptyMessage="No assessments in scope."
+            footerHref="/assessments"
+            footerLabel="Open Assessments"
+            size="lg"
+          />
+
+          <MetricListModal
+            open={metricModal === "compliance"}
+            onClose={() => setMetricModal(null)}
+            title="Compliance Score"
+            description="Portfolio pillar completion and per-account maturity"
+            rows={complianceModalRows}
+            emptyMessage="No compliance data yet."
+            footerHref="/admin/frameworks"
+            footerLabel="Open Frameworks"
+            size="lg"
+          />
+
+          <MetricListModal
+            open={metricModal === "risks"}
+            onClose={() => setMetricModal(null)}
+            title="Open Security Risks"
+            description="Severity breakdown and per-account exception volume (pillar-wise where tagged)"
+            rows={riskModalRows}
+            emptyMessage="No open exceptions in scope."
+            footerHref="/assessments"
+            footerLabel="Open Assessments"
+            size="lg"
+          />
+
+          <MetricListModal
+            open={metricModal === "auditorPerf"}
+            onClose={() => setMetricModal(null)}
+            title="Auditor Performance"
+            description="Assigned vs completed workload for every assessor in scope"
+            rows={auditorModalRows}
+            emptyMessage="No auditor activity yet."
+            footerHref="/admin/assessors"
+            footerLabel="Open Assessors"
+            size="lg"
+          />
         </>
       )}
     </div>

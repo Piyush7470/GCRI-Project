@@ -38,5 +38,5 @@ export function AssessmentConfidentialGate({ children }: { children: React.React
     );
   }
 
-  return <>{children}</>;
+  return <div className="h-full min-h-0 flex flex-col">{children}</div>;
 }

@@ -22,38 +22,16 @@ const router = Router();
  * /api/v1/admin/auditor-mappings:
  *   post:
  *     summary: Assign an Auditor to an Organization
+ *     description: Tenant Admin module — maps assessors to client organizations in the active tenant.
  *     tags:
  *       - Auditor Assignments
  *     security:
  *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - organizationId
- *               - auditorId
- *             properties:
- *               organizationId:
- *                 type: string
- *               auditorId:
- *                 type: string
- *     responses:
- *       201:
- *         description: Auditor successfully assigned
- *       400:
- *         description: Invalid auditor role or request
- *       404:
- *         description: Organization or Auditor not found
- *       409:
- *         description: Active assignment already exists
  */
 router.post(
   "/",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("TenantAdmin", "Admin"),
   validateRequest(AssignAuditorSchema),
   assignAuditor
 );
@@ -62,30 +40,13 @@ router.post(
  * @openapi
  * /api/v1/admin/auditor-mappings:
  *   get:
- *     summary: List all auditor-organization mappings platform-wide
+ *     summary: List auditor-organization mappings for the active tenant
  *     tags:
  *       - Auditor Assignments
  *     security:
  *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [Active, Inactive, All]
- *       - in: query
- *         name: organizationId
- *         schema:
- *           type: string
- *       - in: query
- *         name: auditorId
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Paginated list of auditor-organization assignments
  */
-router.get("/", authenticate, authorize("SuperAdmin", "Admin"), getAuditorMappings);
+router.get("/", authenticate, authorize("TenantAdmin", "Admin"), getAuditorMappings);
 
 /**
  * @openapi
@@ -96,20 +57,11 @@ router.get("/", authenticate, authorize("SuperAdmin", "Admin"), getAuditorMappin
  *       - Auditor Assignments
  *     security:
  *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: organizationId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: List of assigned auditors
  */
 router.get(
   "/org/:organizationId",
   authenticate,
-  authorize("SuperAdmin", "Admin", "Assessor"),
+  authorize("TenantAdmin", "Admin", "Assessor", "Auditor"),
   validateRequest(OrganizationParamSchema),
   getAuditorsForOrganization
 );
@@ -123,20 +75,11 @@ router.get(
  *       - Auditor Assignments
  *     security:
  *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: auditorId
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: List of assigned organizations
  */
 router.get(
   "/auditor/:auditorId",
   authenticate,
-  authorize("SuperAdmin", "Admin", "Assessor"),
+  authorize("TenantAdmin", "Admin", "Assessor", "Auditor"),
   validateRequest(AuditorParamSchema),
   getOrganizationsForAuditor
 );
@@ -150,22 +93,11 @@ router.get(
  *       - Auditor Assignments
  *     security:
  *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Auditor successfully unassigned
- *       404:
- *         description: Mapping not found
  */
 router.delete(
   "/:id",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("TenantAdmin", "Admin"),
   validateRequest(MappingIdParamSchema),
   removeAuditorMapping
 );

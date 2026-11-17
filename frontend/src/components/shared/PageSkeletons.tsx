@@ -109,12 +109,12 @@ export function AssessmentListSkeleton() {
 
 export function AssessmentWorkspaceSkeleton() {
   return (
-    <div className="space-y-6" aria-busy aria-label="Loading assessment">
-      <Skeleton className="h-10 w-1/3 max-w-md" />
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[600px]">
-        <Skeleton className="lg:col-span-3 h-full min-h-[400px] rounded-xl" />
-        <Skeleton className="lg:col-span-6 h-full min-h-[400px] rounded-xl" />
-        <Skeleton className="lg:col-span-3 h-full min-h-[400px] rounded-xl" />
+    <div className="h-full min-h-0 flex flex-col gap-2.5" aria-busy aria-label="Loading assessment">
+      <Skeleton className="h-16 w-full rounded-2xl shrink-0" />
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2.5">
+        <Skeleton className="lg:col-span-4 xl:col-span-3 h-full min-h-[240px] rounded-2xl" />
+        <Skeleton className="lg:col-span-8 xl:col-span-6 h-full min-h-[240px] rounded-2xl" />
+        <Skeleton className="hidden xl:block xl:col-span-3 h-full min-h-[240px] rounded-2xl" />
       </div>
     </div>
   );

@@ -9,7 +9,7 @@ const router = Router();
  * /api/v1/admin/api-keys:
  *   post:
  *     summary: Generate a new Machine-to-Machine (M2M) API Key
- *     description: Creates an API key for headless service authentication. The raw secret is returned exactly once in the response.
+ *     description: Creates an API key for headless service authentication. Tenant Admin only.
  *     tags:
  *       - Machine-to-Machine Authentication
  *     security:
@@ -34,20 +34,20 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  *       403:
- *         description: Forbidden (Admin only)
+ *         description: Forbidden (Tenant Admin only)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/", authenticate, authorize("SuperAdmin", "Admin"), createApiKey);
+router.post("/", authenticate, authorize("TenantAdmin", "Admin"), createApiKey);
 
 /**
  * @openapi
  * /api/v1/admin/api-keys:
  *   get:
  *     summary: List active M2M API Keys
- *     description: Returns directory of created API keys with metadata (secrets masked).
+ *     description: Returns directory of created API keys with metadata (secrets masked). Tenant-scoped.
  *     tags:
  *       - Machine-to-Machine Authentication
  *     security:
@@ -60,20 +60,20 @@ router.post("/", authenticate, authorize("SuperAdmin", "Admin"), createApiKey);
  *             schema:
  *               $ref: '#/components/schemas/ApiKeyListResponse'
  *       403:
- *         description: Forbidden (Admin only)
+ *         description: Forbidden (Tenant Admin only)
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.get("/", authenticate, authorize("SuperAdmin", "Admin"), listApiKeys);
+router.get("/", authenticate, authorize("TenantAdmin", "Admin"), listApiKeys);
 
 /**
  * @openapi
  * /api/v1/admin/api-keys/{id}:
  *   delete:
  *     summary: Revoke an M2M API Key
- *     description: Deactivates an API key, permanently revoking its access permissions.
+ *     description: Deactivates an API key, permanently revoking its access permissions. Tenant Admin only.
  *     tags:
  *       - Machine-to-Machine Authentication
  *     security:
@@ -92,7 +92,7 @@ router.get("/", authenticate, authorize("SuperAdmin", "Admin"), listApiKeys);
  *             schema:
  *               $ref: '#/components/schemas/MessageResponse'
  *       403:
- *         description: Forbidden (Admin only)
+ *         description: Forbidden (Tenant Admin only)
  *         content:
  *           application/json:
  *             schema:
@@ -104,6 +104,6 @@ router.get("/", authenticate, authorize("SuperAdmin", "Admin"), listApiKeys);
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.delete("/:id", authenticate, authorize("SuperAdmin", "Admin"), revokeApiKey);
+router.delete("/:id", authenticate, authorize("TenantAdmin", "Admin"), revokeApiKey);
 
 export default router;

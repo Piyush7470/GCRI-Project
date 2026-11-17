@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { apiKeyService, ApiKeyItem } from "@/services/apiKey.service";
 import { companyService } from "@/services/company.service";
@@ -28,7 +29,9 @@ import { MetricListModal, MetricListRow } from "@/components/shared/MetricListMo
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
 
 export default function ApiKeysPage() {
-  const { user, isAdmin } = useAuth();
+  const router = useRouter();
+  const { user, loading: authLoading, isOrgAdmin, isSuperAdmin } = useAuth();
+  const canManageApiKeys = isOrgAdmin && !isSuperAdmin;
   const [keys, setKeys] = useState<ApiKeyItem[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,10 +80,15 @@ export default function ApiKeysPage() {
   };
 
   useEffect(() => {
-    if (isAdmin) {
-      loadData();
+    if (authLoading) return;
+    if (isSuperAdmin || !isOrgAdmin) {
+      router.replace("/dashboard");
+      return;
     }
-  }, [isAdmin]);
+    if (canManageApiKeys) {
+      void loadData();
+    }
+  }, [authLoading, canManageApiKeys, isOrgAdmin, isSuperAdmin, router]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,15 +154,15 @@ export default function ApiKeysPage() {
     setTimeout(() => setCopied(false), 2500);
   };
 
-  if (!isAdmin) {
+  if (authLoading || !canManageApiKeys) {
     return (
       <div className="max-w-2xl mx-auto my-12 surface-panel p-8 text-center space-y-4 shadow-xs">
         <div className="h-12 w-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
           <ShieldAlert className="h-6 w-6" />
         </div>
-        <h2 className="text-lg font-bold text-slate-900">Platform Admin Authorization Required</h2>
+        <h2 className="text-lg font-bold text-slate-900">Tenant Admin Authorization Required</h2>
         <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
-          Machine-to-Machine API credential creation is restricted strictly to GRAICE Platform Administrators.
+          Machine-to-Machine API keys are managed by Tenant Admins for organizations in their workspace.
         </p>
       </div>
     );
@@ -211,7 +219,7 @@ export default function ApiKeysPage() {
             Machine-to-Machine API Keys
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Provision cryptographically signed API keys for headless CI/CD, telemetry ingestion, and automated auditing.
+            Tenant Admin module — provision API keys for organizations in your workspace (CI/CD, telemetry, automation).
           </p>
         </div>
 

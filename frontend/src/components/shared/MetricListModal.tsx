@@ -1,15 +1,18 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import Link from "next/link";
 import { ExternalLink, X } from "lucide-react";
 import { EntityImage } from "@/components/shared/EntityImage";
+import { ListPagination } from "@/components/shared/ListPagination";
+import { useClientPagination } from "@/hooks/useClientPagination";
 
 export type MetricListRow = {
   id: string;
   title: string;
   subtitle?: string;
   meta?: string;
+  details?: string[];
   badge?: string;
   badgeTone?: "neutral" | "success" | "warning" | "danger" | "info";
   imageUrl?: string | null;
@@ -28,6 +31,8 @@ export type MetricListModalProps = {
   emptyMessage?: string;
   footerHref?: string;
   footerLabel?: string;
+  pageSize?: number;
+  size?: "md" | "lg" | "xl";
 };
 
 const badgeClass: Record<NonNullable<MetricListRow["badgeTone"]>, string> = {
@@ -38,8 +43,14 @@ const badgeClass: Record<NonNullable<MetricListRow["badgeTone"]>, string> = {
   info: "bg-teal-50 text-teal-800 border-teal-200",
 };
 
+const sizeClass: Record<NonNullable<MetricListModalProps["size"]>, string> = {
+  md: "max-w-lg",
+  lg: "max-w-2xl",
+  xl: "max-w-3xl",
+};
+
 /**
- * Popup list for dashboard / organizations metric cards.
+ * Popup list for dashboard / organizations metric cards — client-paginated.
  */
 export function MetricListModal({
   open,
@@ -50,7 +61,20 @@ export function MetricListModal({
   emptyMessage = "No items to display.",
   footerHref,
   footerLabel = "Open full page",
+  pageSize = 8,
+  size = "md",
 }: MetricListModalProps) {
+  const pagination = useClientPagination(rows, pageSize);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
@@ -62,7 +86,7 @@ export function MetricListModal({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg max-h-[min(80vh,640px)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className={`bg-white rounded-2xl shadow-2xl border border-slate-200 w-full ${sizeClass[size]} max-h-[min(85vh,720px)] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3.5 border-b border-slate-100 flex items-start justify-between gap-3 shrink-0">
@@ -92,15 +116,15 @@ export function MetricListModal({
             <div className="px-4 py-10 text-center text-xs text-slate-500">{emptyMessage}</div>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {rows.map((row) => {
+              {pagination.pageItems.map((row) => {
                 const content = (
-                  <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50/90 transition">
+                  <div className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50/90 transition">
                     <EntityImage
                       src={row.imageUrl}
                       name={row.imageName || row.title}
                       variant={row.imageVariant || "logo"}
                       size="md"
-                      className="h-9 w-9"
+                      className="h-9 w-9 mt-0.5"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -118,14 +142,30 @@ export function MetricListModal({
                         )}
                       </div>
                       {row.subtitle && (
-                        <p className="text-[11px] text-slate-500 truncate mt-0.5">{row.subtitle}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5 whitespace-normal">
+                          {row.subtitle}
+                        </p>
                       )}
                       {row.meta && (
-                        <p className="text-[10px] text-slate-400 truncate mt-0.5">{row.meta}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5 whitespace-normal">
+                          {row.meta}
+                        </p>
+                      )}
+                      {row.details && row.details.length > 0 && (
+                        <ul className="mt-1.5 space-y-0.5">
+                          {row.details.map((line) => (
+                            <li
+                              key={`${row.id}-${line}`}
+                              className="text-[10px] text-slate-600 leading-snug"
+                            >
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </div>
                     {(row.href || row.onClick) && (
-                      <ExternalLink className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+                      <ExternalLink className="h-3.5 w-3.5 text-slate-300 shrink-0 mt-1" />
                     )}
                   </div>
                 );
@@ -162,6 +202,18 @@ export function MetricListModal({
             </ul>
           )}
         </div>
+
+        <ListPagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          total={pagination.total}
+          from={pagination.from}
+          to={pagination.to}
+          onPrevious={pagination.goPrev}
+          onNext={pagination.goNext}
+          itemLabel="items"
+          className="shrink-0 rounded-none border-x-0 border-b-0"
+        />
 
         {footerHref && (
           <div className="px-4 py-3 border-t border-slate-100 shrink-0 flex justify-end">

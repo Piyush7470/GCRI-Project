@@ -75,11 +75,17 @@ export function AssessmentWorkspaceRouter({ assessmentId }: { assessmentId: stri
 
   if (assessmentType === "Full") {
     return (
-      <Suspense fallback={<AssessmentWorkspaceSkeleton />}>
-        <FullAssessmentPlayer assessmentId={assessmentId} />
-      </Suspense>
+      <div className="h-full min-h-0 flex flex-col">
+        <Suspense fallback={<AssessmentWorkspaceSkeleton />}>
+          <FullAssessmentPlayer assessmentId={assessmentId} />
+        </Suspense>
+      </div>
     );
   }
 
-  return <AssessmentPlayer assessmentId={assessmentId} />;
+  return (
+    <div className="h-full min-h-0 flex flex-col">
+      <AssessmentPlayer assessmentId={assessmentId} />
+    </div>
+  );
 }
