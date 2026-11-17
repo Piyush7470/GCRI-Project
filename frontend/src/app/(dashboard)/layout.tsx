@@ -84,6 +84,11 @@ function DashboardLayoutContent({
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  /** Fixed viewport + inner panes — only the live assessment workspace, not setup/review routes */
+  const isActiveAssessmentPlayer = Boolean(
+    pathname?.match(/^\/assessments\/[^/]+$/) && pathname !== "/assessments/new"
+  );
+
   const auditorNavItems = [
     { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
     { label: "Organizations", href: "/organizations", icon: Building2 },
@@ -380,7 +385,7 @@ function DashboardLayoutContent({
             pathname?.includes("/admin/auditor-mappings") ||
             pathname?.includes("/organizations") ||
             pathname?.includes("/admin/tenants") ||
-            Boolean(pathname?.match(/^\/assessments\/[^/]+$/))
+            isActiveAssessmentPlayer
               ? "p-3 sm:p-4 overflow-hidden flex flex-col min-h-0"
               : "p-4 sm:p-6 lg:p-8 overflow-y-auto"
           }`}
