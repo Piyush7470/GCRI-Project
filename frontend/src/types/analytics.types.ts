@@ -96,6 +96,29 @@ export interface DashboardAnalytics {
     pending?: number;
     completionRate: number;
   }>;
+  /** Directory rows matching totalUsers / totalAuditors KPI filters (for drill-down modals). */
+  kpiDirectories?: {
+    users: Array<{
+      _id: string;
+      name: string;
+      email: string;
+      role: string;
+      status: string;
+      companyName?: string;
+      avatarUrl?: string;
+      createdAt?: string;
+    }>;
+    auditors: Array<{
+      _id: string;
+      name: string;
+      email: string;
+      role: string;
+      status: string;
+      companyName?: string;
+      avatarUrl?: string;
+      createdAt?: string;
+    }>;
+  };
   assessmentPipeline: {
     completed: number;
     inProgress: number;

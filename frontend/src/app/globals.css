@@ -92,6 +92,53 @@
     letter-spacing: -0.03em;
     line-height: 1.12;
   }
+
+  /*
+   * Stronger field / control borders — light slate-200 on white was nearly invisible.
+   * Keep focus rings teal for accessibility.
+   */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="image"]),
+  select,
+  textarea {
+    border-width: 1.5px !important;
+    border-color: #94a3b8 !important; /* slate-400 */
+    background-color: #ffffff;
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]):focus,
+  select:focus,
+  textarea:focus {
+    border-color: #0d9488 !important; /* teal-600 */
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.18);
+  }
+
+  .dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]):not([type="submit"]):not([type="button"]),
+  .dark select,
+  .dark textarea {
+    border-color: #64748b !important; /* slate-500 */
+    background-color: #0f172a;
+  }
+
+  /* Popup / dialog shells (shared Modal + inline fixed overlays) */
+  [role="dialog"].bg-white,
+  [aria-modal="true"].bg-white,
+  [role="dialog"] > div.bg-white,
+  [aria-modal="true"] > div.bg-white,
+  .fixed.inset-0 > div.bg-white.rounded-2xl,
+  .fixed.inset-0 > div.bg-white.rounded-xl {
+    border-width: 2px !important;
+    border-color: #64748b !important; /* slate-500 */
+  }
+
+  .dark [role="dialog"].bg-white,
+  .dark [aria-modal="true"].bg-white,
+  .dark [role="dialog"] > div.bg-white,
+  .dark [aria-modal="true"] > div.bg-white,
+  .dark .fixed.inset-0 > div.bg-white.rounded-2xl,
+  .dark .fixed.inset-0 > div.bg-white.rounded-xl {
+    border-color: #94a3b8 !important;
+  }
 }
 
 @keyframes api-loading-bar {

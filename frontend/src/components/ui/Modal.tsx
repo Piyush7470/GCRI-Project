@@ -85,11 +85,13 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className={`bg-white rounded-2xl shadow-2xl border border-slate-200 w-full ${widthClass} overflow-hidden animate-in zoom-in-95 duration-150`}
+        role="dialog"
+        aria-modal="true"
+        className={`bg-white rounded-2xl shadow-2xl border-2 border-slate-500 w-full ${widthClass} overflow-hidden animate-in zoom-in-95 duration-150`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <div className="p-4 border-b-2 border-slate-200 flex items-center justify-between bg-slate-50/80">
           <div className="flex items-center gap-3 min-w-0">
             {styles.icon && (
               <div
@@ -122,12 +124,12 @@ export function Modal({
 
         {/* Action Buttons / Footer */}
         {onConfirm && (
-          <div className="p-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+          <div className="p-3.5 bg-slate-50 border-t-2 border-slate-200 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition disabled:opacity-50"
+              className="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border-2 border-slate-400 rounded-lg transition disabled:opacity-50"
             >
               {cancelLabel}
             </button>

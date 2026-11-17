@@ -288,8 +288,8 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
       </div>
 
       {incompleteCount > 0 && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 flex gap-3 text-sm text-amber-900">
-          <AlertTriangle className="h-5 w-5 shrink-0" />
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-300 flex gap-3 text-sm text-rose-900">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-rose-600" />
           <p>
             <strong>{incompleteCount}</strong> control(s) are not fully completed. Submitting now may
             score unanswered items as zero or not assessed.
@@ -369,16 +369,18 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
         </div>
       </section>
 
-      <section className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
-        <Paperclip className="h-5 w-5 text-slate-400" />
-        <div className="text-sm">
-          <p className="font-semibold text-slate-900">Evidence summary</p>
-          <p className="text-slate-500 text-xs mt-0.5">
-            {evidenceStats.withEvidence} attachment(s) · {evidenceStats.withNotes} note(s) on record
-            (no mandatory evidence gate on submit).
-          </p>
-        </div>
-      </section>
+      {evidenceStats.withEvidence > 0 && (
+        <section className="bg-white rounded-2xl border border-slate-200 p-5 flex items-center gap-3">
+          <Paperclip className="h-5 w-5 text-slate-400" />
+          <div className="text-sm">
+            <p className="font-semibold text-slate-900">Evidence summary</p>
+            <p className="text-slate-500 text-xs mt-0.5">
+              {evidenceStats.withEvidence} attachment(s) · {evidenceStats.withNotes} note(s) on
+              record (no mandatory evidence gate on submit).
+            </p>
+          </div>
+        </section>
+      )}
 
       {isAssessor && !isOrgAdmin && (
         <section className="bg-white rounded-2xl border border-teal-200 p-5 space-y-3">

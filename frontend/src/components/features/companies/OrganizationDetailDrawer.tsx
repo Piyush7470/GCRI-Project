@@ -28,6 +28,7 @@ import {
   ChevronRight,
   Check,
   Save,
+  MoreVertical,
 } from "lucide-react";
 import { Company, SubscriptionTier } from "@/types/company.types";
 import { User as UserType } from "@/types/auth.types";
@@ -95,8 +96,9 @@ export default function OrganizationDetailDrawer({
     }
   }, [initialCompany, fetchFreshCompany]);
 
-  // Inline Direct Edit State
-  const [isEditing, setIsEditing] = useState(false);
+  // Edit Profile modal (Actions → Edit Profile)
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState(false);
@@ -240,7 +242,7 @@ export default function OrganizationDetailDrawer({
         );
       }
 
-      setIsEditing(false);
+      setEditModalOpen(false);
       setEditSuccess(true);
       setTimeout(() => setEditSuccess(false), 3000);
       onRefreshCompany?.();
@@ -256,8 +258,7 @@ export default function OrganizationDetailDrawer({
     }
   };
 
-  // Cancel Inline Edit
-  const handleCancelInlineEdit = () => {
+  const openEditProfileModal = () => {
     setEditForm({
       name: company.name,
       domain: company.domain,
@@ -268,7 +269,13 @@ export default function OrganizationDetailDrawer({
       subscriptionTier: company.activePlan || "Gold",
     });
     setEditError(null);
-    setIsEditing(false);
+    setActionsMenuOpen(false);
+    setEditModalOpen(true);
+  };
+
+  const handleCancelEditProfile = () => {
+    setEditError(null);
+    setEditModalOpen(false);
   };
 
   // Handle Assign Auditor
@@ -381,21 +388,6 @@ export default function OrganizationDetailDrawer({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            {/* Direct Edit Toggle Button in Header */}
-            <button
-              onClick={() => {
-                setActiveTab("overview");
-                setIsEditing(!isEditing);
-              }}
-              title={isEditing ? "Close Edit" : "Edit Organization Directly"}
-              className={`p-1.5 rounded-lg transition ${
-                isEditing
-                  ? "bg-teal-50 text-teal-700 border border-teal-200"
-                  : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </button>
             <button
               onClick={onClose}
               title="Close Drawer"
@@ -473,19 +465,43 @@ export default function OrganizationDetailDrawer({
 
             {/* Organization Details Card */}
             <div className="bg-slate-50/60 rounded-xl border border-slate-200/90 p-3.5 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                   <Building2 className="h-3.5 w-3.5 text-teal-600" />
-                  {isEditing ? "Edit Organization (Direct)" : "Organization Details"}
+                  Organization Details
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-600 hover:text-teal-700 transition"
-                >
-                  <Edit3 className="h-3 w-3" />
-                  {isEditing ? "Cancel" : "Edit"}
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setActionsMenuOpen((open) => !open)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-teal-700 border border-slate-200 bg-white hover:border-teal-200 rounded-lg transition"
+                    aria-haspopup="menu"
+                    aria-expanded={actionsMenuOpen}
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" />
+                    Actions
+                  </button>
+                  {actionsMenuOpen && (
+                    <>
+                      <button
+                        type="button"
+                        className="fixed inset-0 z-10 cursor-default"
+                        aria-label="Close actions menu"
+                        onClick={() => setActionsMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-1 z-20 min-w-[150px] rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+                        <button
+                          type="button"
+                          onClick={openEditProfileModal}
+                          className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-teal-50 hover:text-teal-800 inline-flex items-center gap-2"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                          Edit Profile
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               {isAdmin && company?._id && (
@@ -522,203 +538,95 @@ export default function OrganizationDetailDrawer({
                 />
               )}
 
-              {isEditing ? (
-                /* Direct Inline Form - No Popup Dialog */
-                <form onSubmit={handleSaveInlineEdit} className="space-y-3 pt-1 animate-in fade-in">
-                  {editError && (
-                    <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
-                      {editError}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Legal Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={editForm.name}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Primary Domain (read-only)
-                    </label>
-                    <div className="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600">
-                      {company.domain}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Industry
-                    </label>
-                    <input
-                      type="text"
-                      value={editForm.industry}
-                      onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
-                      placeholder="e.g. Technology"
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Country
-                    </label>
-                    <input
-                      type="text"
-                      value={editForm.country}
-                      onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-                      placeholder="e.g. United States"
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Registration No
-                      </label>
-                      <input
-                        type="text"
-                        value={editForm.registrationNumber}
-                        onChange={(e) => setEditForm({ ...editForm, registrationNumber: e.target.value })}
-                        placeholder="e.g. REG-12345"
-                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Tier (read-only)
-                      </label>
-                      <div className="w-full text-xs px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
-                        {company.activePlan || "Bronze"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={handleCancelInlineEdit}
-                      className="px-2.5 py-1 text-slate-600 hover:bg-slate-200/60 rounded-md text-[11px] font-medium"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={savingEdit}
-                      className="px-3 py-1 bg-gradient-to-r from-teal-500 to-blue-600 hover:opacity-95 text-white rounded-md text-[11px] font-semibold transition disabled:opacity-50 flex items-center gap-1 shadow-2xs"
-                    >
-                      {savingEdit ? (
-                        <>
-                          <RefreshCw className="h-3 w-3 animate-spin" /> Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="h-3 w-3" /> Save Changes
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                /* View Mode - Matching Reference Screen (All Backend Fields) */
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Industry</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.industry || "Technology"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Size</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.size || "500 - 1,000 employees"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Website</span>
-                    <a
-                      href={`https://${company.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-semibold text-teal-600 hover:underline flex items-center gap-1"
-                    >
-                      <span>{company.domain}</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Contact Person</span>
-                    <span className="font-semibold text-slate-900">
-                      {company.clientUser?.name || "John Anderson"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Email</span>
-                    {company.clientUser?.email ? (
-                      <a
-                        href={`mailto:${company.clientUser.email}`}
-                        className="font-semibold text-teal-600 hover:underline"
-                      >
-                        {company.clientUser.email}
-                      </a>
-                    ) : (
-                      <span className="font-semibold text-teal-600">
-                        {`contact@${company.domain}`}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Phone</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.clientUser?.phone || "+1 212 555 0100"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Address</span>
-                    <span className="font-semibold text-slate-800 text-right">
-                      {company.country || "123 Business Ave, New York, USA"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Registration No</span>
-                    <span className="font-mono text-slate-700">
-                      {company.registrationNumber || "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Subscription Tier</span>
-                    <span className="font-bold text-amber-700">
-                      {company.activePlan || "Standard"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5">
-                    <span className="text-slate-500 font-medium">DNS Verification</span>
-                    <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
-                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                      {company.verificationStatus === "Verified"
-                        ? "Verified Domain"
-                        : "Pending Check"}
-                    </span>
-                  </div>
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Industry</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.industry || "Technology"}
+                  </span>
                 </div>
-              )}
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Size</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.size || "500 - 1,000 employees"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Website</span>
+                  <a
+                    href={`https://${company.domain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-teal-600 hover:underline flex items-center gap-1"
+                  >
+                    <span>{company.domain}</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Contact Person</span>
+                  <span className="font-semibold text-slate-900">
+                    {company.clientUser?.name || "John Anderson"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Email</span>
+                  {company.clientUser?.email ? (
+                    <a
+                      href={`mailto:${company.clientUser.email}`}
+                      className="font-semibold text-teal-600 hover:underline"
+                    >
+                      {company.clientUser.email}
+                    </a>
+                  ) : (
+                    <span className="font-semibold text-teal-600">
+                      {`contact@${company.domain}`}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Phone</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.clientUser?.phone || "+1 212 555 0100"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Address</span>
+                  <span className="font-semibold text-slate-800 text-right">
+                    {company.country || "123 Business Ave, New York, USA"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Registration No</span>
+                  <span className="font-mono text-slate-700">
+                    {company.registrationNumber || "—"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Subscription Tier</span>
+                  <span className="font-bold text-amber-700">
+                    {company.activePlan || "Standard"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-slate-500 font-medium">DNS Verification</span>
+                  <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    {company.verificationStatus === "Verified"
+                      ? "Verified Domain"
+                      : "Pending Check"}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1087,6 +995,116 @@ export default function OrganizationDetailDrawer({
         variant={confirmModal.variant}
         loading={confirmModal.loading}
       />
+
+      {/* Edit Profile popup */}
+      <Modal
+        isOpen={editModalOpen}
+        onClose={handleCancelEditProfile}
+        title="Edit Profile"
+        maxWidth="md"
+      >
+        <form onSubmit={handleSaveInlineEdit} className="space-y-3">
+          {editError && (
+            <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
+              {editError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+              Legal Name *
+            </label>
+            <input
+              type="text"
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+              Primary Domain (read-only)
+            </label>
+            <div className="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600">
+              {company.domain}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Industry</label>
+            <input
+              type="text"
+              value={editForm.industry}
+              onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
+              placeholder="e.g. Technology"
+              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Country</label>
+            <input
+              type="text"
+              value={editForm.country}
+              onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+              placeholder="e.g. United States"
+              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Registration No
+              </label>
+              <input
+                type="text"
+                value={editForm.registrationNumber}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, registrationNumber: e.target.value })
+                }
+                placeholder="e.g. REG-12345"
+                className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Tier (read-only)
+              </label>
+              <div className="w-full text-xs px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
+                {company.activePlan || "Bronze"}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={handleCancelEditProfile}
+              className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-md text-[11px] font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingEdit}
+              className="px-3 py-1.5 bg-gradient-to-r from-teal-500 to-blue-600 hover:opacity-95 text-white rounded-md text-[11px] font-semibold transition disabled:opacity-50 flex items-center gap-1 shadow-2xs"
+            >
+              {savingEdit ? (
+                <>
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-3 w-3" /> Save Changes
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

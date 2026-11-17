@@ -311,9 +311,11 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
     : false;
   const currentCanProceed = currentAnswered || currentSkipped;
 
+  const isLastQuestion = currentIndex >= questions.length - 1;
   const canGoNext =
-    currentCanProceed && currentIndex < questions.length - 1 && !isSubmitted;
+    currentCanProceed && !isLastQuestion && !isSubmitted;
   const canGoPrev = currentIndex > 0;
+  const canGoReviewSubmit = currentCanProceed && isLastQuestion && !isSubmitted;
 
   const showNavLock = (message: string) => {
     setNavLockMessage(message);
@@ -511,7 +513,7 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                   href={`/assessments/${assessmentId}/review`}
                   className="px-3 py-1.5 text-xs font-semibold bg-gradient-to-r from-teal-600 to-blue-600 text-white rounded-lg shadow-md hover:opacity-95 inline-flex items-center gap-1.5"
                 >
-                  <ClipboardCheck className="h-3.5 w-3.5" /> Review
+                  <ClipboardCheck className="h-3.5 w-3.5" /> Review &amp; submit
                 </Link>
               </>
             )}
@@ -844,10 +846,15 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                     <CircleDashed className="h-3.5 w-3.5 text-amber-500" />
                     Pick an option or <strong className="text-slate-700">Skip</strong>
                   </>
-                ) : currentSkipped ? (
+                ) : currentSkipped && !isLastQuestion ? (
                   <>
                     <SkipForward className="h-3.5 w-3.5 text-amber-600" />
                     Skipped — use <strong className="text-slate-700">Next</strong>
+                  </>
+                ) : isLastQuestion && !isSubmitted ? (
+                  <>
+                    <ClipboardCheck className="h-3.5 w-3.5 text-teal-600" />
+                    Last question — open <strong className="text-slate-700">Review &amp; submit</strong>
                   </>
                 ) : (
                   <>
@@ -874,19 +881,45 @@ export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
                     <SkipForward className="h-4 w-4" /> Skip
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => tryNavigateToIndex(currentIndex + 1)}
-                  disabled={!canGoNext}
-                  className={cn(
-                    "px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
-                    canGoNext
-                      ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
-                      : "bg-slate-200 text-slate-500 cursor-not-allowed"
-                  )}
-                >
-                  Next <ChevronRight className="h-4 w-4" />
-                </button>
+                {isLastQuestion ? (
+                  isSubmitted ? (
+                    <Link
+                      href={`/assessments/${assessmentId}/results`}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-1.5 shadow-md"
+                    >
+                      <FileCheck2 className="h-4 w-4" /> Results
+                    </Link>
+                  ) : canGoReviewSubmit ? (
+                    <Link
+                      href={`/assessments/${assessmentId}/review`}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md"
+                    >
+                      <ClipboardCheck className="h-4 w-4" /> Review &amp; submit
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-200 text-slate-500 cursor-not-allowed inline-flex items-center gap-1.5"
+                    >
+                      <ClipboardCheck className="h-4 w-4" /> Review &amp; submit
+                    </button>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => tryNavigateToIndex(currentIndex + 1)}
+                    disabled={!canGoNext}
+                    className={cn(
+                      "px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
+                      canGoNext
+                        ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                    )}
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </div>
           </article>

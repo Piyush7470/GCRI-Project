@@ -137,19 +137,19 @@ function DashboardLayoutContent({
           mobileMenuOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
         }`}
       >
-        {/* Brand Header */}
-        <div className="px-4 py-5 border-b border-[#18274a]/60 shrink-0 flex items-center justify-between gap-2">
+        {/* Brand Header — logo centered in the sidebar column */}
+        <div className="relative px-4 py-5 border-b border-[#18274a]/60 shrink-0 flex items-center justify-center">
           <Link
             href="/dashboard"
             onClick={() => setMobileMenuOpen(false)}
-            className="flex min-w-0 flex-1 items-center"
+            className="flex min-w-0 items-center justify-center"
           >
-            <BrandLogo variant="sidebar" />
+            <BrandLogo variant="sidebar" className="mx-auto" />
           </Link>
           <button
             type="button"
             onClick={() => setMobileMenuOpen(false)}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+            className="lg:hidden absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
             aria-label="Close menu"
           >
             <X className="h-5 w-5" />
