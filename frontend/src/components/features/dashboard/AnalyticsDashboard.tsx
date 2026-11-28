@@ -28,7 +28,6 @@ import {
   FileSpreadsheet,
   Loader2,
   Minus,
-  Radar,
   RefreshCw,
   ShieldAlert,
   TrendingUp,
@@ -42,6 +41,7 @@ import {
   downloadAuditorDashboardExport,
 } from "@/lib/dashboardDownloads";
 import { getApiErrorMessage } from "@/lib/authUser";
+import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { MetricListModal, MetricListRow } from "@/components/shared/MetricListModal";
 import { userService } from "@/services/user.service";
@@ -62,6 +62,137 @@ function formatMonth(ym: string) {
   const [y, m] = ym.split("-");
   const d = new Date(Number(y), Number(m) - 1, 1);
   return d.toLocaleDateString(undefined, { month: "short" });
+}
+
+type KpiTileMetricKey =
+  | "users"
+  | "auditors"
+  | "orgs"
+  | "assessments"
+  | "compliance"
+  | "risks";
+
+type OutlierItem = NonNullable<DashboardAnalytics["outliers"]>[number];
+
+const OUTLIER_TYPE_LABEL: Record<OutlierItem["type"], string> = {
+  organization: "Client organization",
+  auditor: "Assessor",
+  risk: "Risk",
+  compliance: "Compliance",
+};
+
+const SEVERITY_RANK: Record<OutlierItem["severity"], number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+};
+
+const INSIGHTS_VISIBLE_MAX = 5;
+
+function displayOutlierLabel(label: string) {
+  const trimmed = label.replace(/\s*\d{10,}\s*$/, "").trim();
+  return trimmed || label;
+}
+
+function outlierSummaryLine(o: OutlierItem) {
+  if (typeof o.value === "number" && (o.type === "organization" || o.type === "auditor")) {
+    return `${o.value}%`;
+  }
+  const short = o.detail.split("·")[0]?.trim() || o.detail;
+  return short.length > 48 ? `${short.slice(0, 45)}…` : short;
+}
+
+function severityDotClass(severity: OutlierItem["severity"]) {
+  if (severity === "critical") return "bg-rose-500";
+  if (severity === "high") return "bg-amber-500";
+  return "bg-slate-400";
+}
+
+function InsightsOutliersPanel({ outliers }: { outliers: OutlierItem[] }) {
+  const visible = useMemo(
+    () =>
+      [...outliers]
+        .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
+        .slice(0, INSIGHTS_VISIBLE_MAX),
+    [outliers]
+  );
+
+  if (visible.length === 0) return null;
+
+  const hidden = outliers.length - visible.length;
+
+  return (
+    <div className="rounded-xl border border-slate-200/90 bg-white px-4 py-3 shadow-xs">
+      <div className="flex items-center justify-between gap-2 mb-2.5">
+        <h3 className="text-sm font-bold text-slate-900">Insights</h3>
+        <span className="text-[10px] font-medium text-slate-500 tabular-nums">
+          {outliers.length} flag{outliers.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      <ul className="space-y-1.5">
+        {visible.map((o, idx) => (
+          <li
+            key={`${o.type}-${o.label}-${idx}`}
+            className="flex items-center gap-2 rounded-lg bg-slate-50/80 border border-slate-100 px-2.5 py-2 text-[11px]"
+          >
+            <span
+              className={cn("h-2 w-2 rounded-full shrink-0", severityDotClass(o.severity))}
+              title={o.severity}
+            />
+            <span className="font-semibold text-slate-800 truncate min-w-0 max-w-[38%] sm:max-w-[42%]">
+              {displayOutlierLabel(o.label)}
+            </span>
+            <span className="hidden sm:inline text-[10px] font-medium text-slate-400 uppercase tracking-wide shrink-0">
+              {OUTLIER_TYPE_LABEL[o.type]}
+            </span>
+            <span className="flex-1 text-slate-500 truncate text-right tabular-nums">{outlierSummaryLine(o)}</span>
+          </li>
+        ))}
+      </ul>
+
+      {hidden > 0 && (
+        <p className="text-[10px] text-slate-400 mt-2">+{hidden} more — use dashboard export for the full list.</p>
+      )}
+    </div>
+  );
+}
+
+function kpiTileHref(
+  key: KpiTileMetricKey,
+  { isAuditor, isSuperAdmin }: { isAuditor: boolean; isSuperAdmin: boolean }
+): string {
+  if (isSuperAdmin) {
+    const map: Record<KpiTileMetricKey, string> = {
+      users: "/admin/users",
+      auditors: "/admin/users",
+      orgs: "/admin/tenants",
+      assessments: "/admin/audit-logs",
+      compliance: "/admin/frameworks",
+      risks: "/admin/audit-logs",
+    };
+    return map[key];
+  }
+  if (isAuditor) {
+    const map: Record<KpiTileMetricKey, string> = {
+      users: "/assessments",
+      auditors: "/assessments",
+      orgs: "/organizations",
+      assessments: "/assessments",
+      compliance: "/assessments",
+      risks: "/assessments",
+    };
+    return map[key];
+  }
+  const map: Record<KpiTileMetricKey, string> = {
+    users: "/admin/users",
+    auditors: "/admin/assessors",
+    orgs: "/organizations",
+    assessments: "/assessments",
+    compliance: "/admin/frameworks",
+    risks: "/assessments",
+  };
+  return map[key];
 }
 
 function DeltaBadge({ delta, invert }: { delta: number; invert?: boolean }) {
@@ -164,10 +295,6 @@ export interface AnalyticsDashboardProps {
   title?: string;
   subtitle?: string;
   isAuditor?: boolean;
-  showScopeSelector?: boolean;
-  scopeOrganizations?: Array<{ _id: string; name: string }>;
-  scopeValue?: string;
-  onScopeChange?: (orgId: string) => void;
   analyticsCompanyId?: string;
 }
 
@@ -181,13 +308,10 @@ export function AnalyticsDashboard({
   title = "Platform Operations & Governance",
   subtitle = "Analytics · trends · outliers · operational telemetry",
   isAuditor = false,
-  showScopeSelector = false,
-  scopeOrganizations = [],
-  scopeValue = "all",
-  onScopeChange,
   analyticsCompanyId,
 }: AnalyticsDashboardProps) {
   const toast = useToast();
+  const { isSuperAdmin } = useAuth();
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
   const [metricModal, setMetricModal] = useState<
@@ -368,7 +492,7 @@ export function AnalyticsDashboard({
         },
         {
           key: "auditors",
-          label: isAuditor ? "Active Assessor" : "Accredited Auditors",
+          label: isAuditor ? "Active assessor" : "Accredited assessors",
           kpi: {
             ...data.kpis.totalAuditors,
             value: data.kpiDirectories?.auditors
@@ -391,7 +515,7 @@ export function AnalyticsDashboard({
               : data.kpis.totalOrganizations.value,
             hint: isAuditor
               ? `${scopedOrgCount} assigned organization${scopedOrgCount === 1 ? "" : "s"}`
-              : data.kpis.totalOrganizations.hint || "Client accounts",
+              : data.kpis.totalOrganizations.hint || "Client organizations",
           },
           icon: Building2,
           theme: "bg-indigo-50 text-indigo-700",
@@ -650,24 +774,6 @@ export function AnalyticsDashboard({
           <p className="text-xs sm:text-sm text-slate-500 mt-1">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {showScopeSelector && onScopeChange && (
-            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
-              <Building2 className="h-3.5 w-3.5 text-slate-400" />
-              Scope
-              <select
-                value={scopeValue}
-                onChange={(e) => onScopeChange(e.target.value)}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 min-w-[140px] max-w-[200px]"
-              >
-                <option value="all">All organizations</option>
-                {scopeOrganizations.map((o) => (
-                  <option key={o._id} value={o._id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
             {RANGES.map((r) => (
               <button
@@ -765,12 +871,14 @@ export function AnalyticsDashboard({
                           ? "compliance"
                           : "risks";
               return (
-                <button
+                <Link
                   key={card.key}
-                  type="button"
-                  onClick={() => openMetric(modalKey)}
+                  href={kpiTileHref(modalKey, {
+                    isAuditor,
+                    isSuperAdmin: Boolean(isSuperAdmin),
+                  })}
                   className={cn(
-                    "rounded-2xl border-2 border-slate-300 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-500 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
+                    "block rounded-2xl border-2 border-slate-300 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-500 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
                     card.kpi.outlier && "border-rose-400 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
                   )}
                 >
@@ -790,52 +898,14 @@ export function AnalyticsDashboard({
                   <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 font-medium">
                     {card.kpi.hint || `vs prior ${range}`}
                   </p>
-                  <p className="text-[10px] font-bold text-teal-700 mt-1.5">View details →</p>
-                </button>
+                  <p className="text-[10px] font-bold text-teal-700 mt-1.5">Open module →</p>
+                </Link>
               );
             })}
           </div>
 
           {(data.outliers ?? []).length > 0 && (
-            <ChartCard
-              title="Insights & outliers"
-              subtitle="Automated signals — low maturity tenants, workload gaps, risk spikes, and trend declines"
-              className="border-amber-200/80 bg-gradient-to-br from-amber-50/40 via-white to-white"
-            >
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                {(data.outliers ?? []).map((o, idx) => (
-                  <div
-                    key={`${o.type}-${o.label}-${idx}`}
-                    className={cn(
-                      "rounded-xl border px-3 py-2.5",
-                      o.severity === "critical"
-                        ? "border-rose-200 bg-rose-50/80"
-                        : o.severity === "high"
-                          ? "border-amber-200 bg-amber-50/60"
-                          : "border-slate-200 bg-slate-50/80"
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Radar
-                        className={cn(
-                          "h-3.5 w-3.5 shrink-0",
-                          o.severity === "critical"
-                            ? "text-rose-600"
-                            : o.severity === "high"
-                              ? "text-amber-700"
-                              : "text-slate-500"
-                        )}
-                      />
-                      <p className="text-[11px] font-bold text-slate-900 truncate">{o.label}</p>
-                      <span className="ml-auto text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                        {o.type}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-600 mt-1 leading-snug">{o.detail}</p>
-                  </div>
-                ))}
-              </div>
-            </ChartCard>
+            <InsightsOutliersPanel outliers={data.outliers} />
           )}
 
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
@@ -1168,7 +1238,7 @@ export function AnalyticsDashboard({
 
             <ChartCard
               className="xl:col-span-4"
-              title="Auditor Performance"
+              title="Assessor performance"
               subtitle="Assigned vs completed assessment workload"
               action={
                 <button
@@ -1182,7 +1252,7 @@ export function AnalyticsDashboard({
             >
               <div className="space-y-3">
                 {data.auditorPerformance.length === 0 ? (
-                  <p className="text-xs text-slate-500">No auditor activity yet.</p>
+                  <p className="text-xs text-slate-500">No assessor activity yet.</p>
                 ) : (
                   data.auditorPerformance.slice(0, 6).map((a) => (
                     <button
@@ -1353,7 +1423,7 @@ export function AnalyticsDashboard({
               metricModal === "auditors"
                 ? isAuditor
                   ? "Active Assessor"
-                  : "Accredited Auditors"
+                  : "Accredited assessors"
                 : isAuditor
                   ? "Scoped Users"
                   : "Platform Users"
@@ -1430,7 +1500,7 @@ export function AnalyticsDashboard({
           <MetricListModal
             open={metricModal === "auditorPerf"}
             onClose={() => setMetricModal(null)}
-            title="Auditor Performance"
+            title="Assessor performance"
             description="Assigned vs completed workload for every assessor in scope"
             rows={auditorModalRows}
             emptyMessage="No auditor activity yet."

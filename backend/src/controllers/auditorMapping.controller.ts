@@ -37,10 +37,19 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
       return sendError(res, "Organization not found", 404, "ORGANIZATION_NOT_FOUND");
     }
 
+    if (organization.status === "Suspended") {
+      return sendError(
+        res,
+        `Organization "${organization.name}" is suspended. New assessor assignments are not allowed until it is reactivated.`,
+        403,
+        "ORGANIZATION_SUSPENDED"
+      );
+    }
+
     if (!(await assertOrgInTenant(req, organizationId.toString()))) {
       return sendError(
         res,
-        "Access denied. You can only assign auditors to organizations in your tenant.",
+        "Access denied. You can only assign assessors to client organizations in your tenant.",
         403,
         "CROSS_TENANT_ACCESS_DENIED"
       );
@@ -48,12 +57,12 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
 
     const auditor = await User.findById(auditorId);
     if (!auditor) {
-      return sendError(res, "Auditor user not found", 404, "AUDITOR_NOT_FOUND");
+      return sendError(res, "Assessor user not found", 404, "AUDITOR_NOT_FOUND");
     }
     if (!isAuditorRole(auditor.role) && auditor.role !== "Assessor") {
       return sendError(
         res,
-        `User ${auditor.email} does not have the Assessor/Auditor role.`,
+        `User ${auditor.email} does not have the Assessor role.`,
         400,
         "INVALID_AUDITOR_ROLE"
       );
@@ -64,7 +73,7 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
       if (auditor.tenantId.toString() !== req.user.tenantId.toString()) {
         return sendError(
           res,
-          "Access denied. Auditor is outside your tenant workspace.",
+          "Access denied. Assessor is outside your tenant workspace.",
           403,
           "CROSS_TENANT_ACCESS_DENIED"
         );
@@ -80,7 +89,7 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
       if (mapping.status === "Active") {
         return sendError(
           res,
-          "Auditor is already actively mapped to this organization.",
+          "Assessor is already actively mapped to this client organization.",
           409,
           "AUDITOR_MAPPING_ALREADY_EXISTS"
         );
@@ -121,7 +130,7 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
 
     return sendSuccess(
       res,
-      { mapping: populated, message: "Auditor successfully assigned to organization." },
+      { mapping: populated, message: "Assessor successfully assigned to client organization." },
       201
     );
   } catch (err) {
@@ -268,7 +277,7 @@ export async function getOrganizationsForAuditor(req: Request, res: Response, ne
     ) {
       return sendError(
         res,
-        "You do not have permission to view assignments for another auditor.",
+        "You do not have permission to view assignments for another assessor.",
         403,
         "CROSS_AUDITOR_ACCESS_DENIED"
       );
@@ -314,13 +323,13 @@ export async function removeAuditorMapping(req: Request, res: Response, next: Ne
 
     const mapping = await AuditorOrganization.findById(id);
     if (!mapping) {
-      return sendError(res, "Auditor mapping not found", 404, "MAPPING_NOT_FOUND");
+      return sendError(res, "Assessor mapping not found", 404, "MAPPING_NOT_FOUND");
     }
 
     if (!(await assertOrgInTenant(req, mapping.organizationId.toString()))) {
       return sendError(
         res,
-        "Access denied. You can only unassign auditors from organizations in your tenant.",
+        "Access denied. You can only unassign assessors from client organizations in your tenant.",
         403,
         "CROSS_TENANT_ACCESS_DENIED"
       );
@@ -350,7 +359,7 @@ export async function removeAuditorMapping(req: Request, res: Response, next: Ne
 
     return sendSuccess(
       res,
-      { message: "Auditor successfully unassigned from organization.", mappingId: id }
+      { message: "Assessor successfully unassigned from client organization.", mappingId: id }
     );
   } catch (err) {
     next(err);

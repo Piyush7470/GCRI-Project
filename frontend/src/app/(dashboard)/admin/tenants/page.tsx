@@ -7,6 +7,9 @@ import { useAuth } from "@/context/AuthContext";
 import { tenantService } from "@/services/tenant.service";
 import type { TenantRecord, TenantStatus } from "@/types/tenant.types";
 import { getApiErrorMessage } from "@/lib/authUser";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { tenantStatusFilterOptions } from "@/lib/searchSelectOptions";
 import {
   Layers,
   Plus,
@@ -38,6 +41,7 @@ export default function AdminTenantsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -53,6 +57,11 @@ export default function AdminTenantsPage() {
   });
   const [inviteToken, setInviteToken] = useState<string | null>(null);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const load = useCallback(async () => {
     if (!isSuperAdmin) return;
     setLoading(true);
@@ -61,17 +70,26 @@ export default function AdminTenantsPage() {
       const res = await tenantService.listTenants({
         page,
         limit: 20,
-        search: search.trim() || undefined,
+        search: debouncedSearch || undefined,
         status: statusFilter || undefined,
       });
       setTenants(Array.isArray(res.data) ? res.data : []);
-      setTotalPages(res.pagination?.pages ?? 1);
+      const p = res.pagination as { pages?: number; totalPages?: number } | undefined;
+      setTotalPages(p?.totalPages ?? p?.pages ?? 1);
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, "Failed to load tenants."));
+      const msg = getApiErrorMessage(err, "Failed to load tenants.");
+      setError(
+        /failed to fetch|network|connection refused/i.test(msg)
+          ? "Cannot reach the API. Start the backend (port 5090) and try again."
+          : msg
+      );
+      if (debouncedSearch) {
+        setTenants([]);
+      }
     } finally {
       setLoading(false);
     }
-  }, [isSuperAdmin, page, search, statusFilter]);
+  }, [isSuperAdmin, page, debouncedSearch, statusFilter]);
 
   useEffect(() => {
     if (!isSuperAdmin) {
@@ -170,24 +188,30 @@ export default function AdminTenantsPage() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Search name or slug..."
-            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setDebouncedSearch(search.trim());
+              }
+            }}
+            placeholder={fieldPlaceholder.searchTenants}
+            aria-label="Search tenants by name or slug"
+            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-500"
           />
         </div>
-        <select
+        <AsyncSearchSelect
+          compact
+          className="min-w-[9rem]"
           value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
+          onChange={(v) => {
+            setStatusFilter(v);
             setPage(1);
           }}
-          className="text-sm border border-slate-200 rounded-lg py-2 px-2"
-        >
-          <option value="">All statuses</option>
-          <option value="Pending">Pending</option>
-          <option value="Active">Active</option>
-          <option value="Suspended">Suspended</option>
-          <option value="Retired">Retired</option>
-        </select>
+          staticOptions={tenantStatusFilterOptions}
+          searchPlaceholder="Search status…"
+          allowCustom={false}
+          emptyValue=""
+          pageSize={8}
+        />
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs overflow-hidden">
@@ -282,33 +306,45 @@ export default function AdminTenantsPage() {
               </p>
             )}
             <form onSubmit={handleCreate} className="space-y-3">
-              <input
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Tenant name"
-                className="w-full text-sm border rounded-lg px-3 py-2"
-              />
-              <input
-                value={form.slug}
-                onChange={(e) => setForm({ ...form, slug: e.target.value })}
-                placeholder="Slug (optional)"
-                className="w-full text-sm border rounded-lg px-3 py-2 font-mono"
-              />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Tenant name *</label>
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder={fieldPlaceholder.tenantName}
+                  className="w-full text-sm border rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Slug</label>
+                <input
+                  value={form.slug}
+                  onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                  placeholder={fieldPlaceholder.slugOptional}
+                  className="w-full text-sm border rounded-lg px-3 py-2 font-mono"
+                />
+              </div>
               <p className="text-[10px] font-bold text-slate-500 uppercase">First tenant admin (optional)</p>
-              <input
-                value={form.adminName}
-                onChange={(e) => setForm({ ...form, adminName: e.target.value })}
-                placeholder="Admin name"
-                className="w-full text-sm border rounded-lg px-3 py-2"
-              />
-              <input
-                type="email"
-                value={form.adminEmail}
-                onChange={(e) => setForm({ ...form, adminEmail: e.target.value })}
-                placeholder="Admin email"
-                className="w-full text-sm border rounded-lg px-3 py-2"
-              />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Admin name</label>
+                <input
+                  value={form.adminName}
+                  onChange={(e) => setForm({ ...form, adminName: e.target.value })}
+                  placeholder={fieldPlaceholder.name}
+                  className="w-full text-sm border rounded-lg px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Admin email ID</label>
+                <input
+                  type="email"
+                  value={form.adminEmail}
+                  onChange={(e) => setForm({ ...form, adminEmail: e.target.value })}
+                  placeholder={fieldPlaceholder.email}
+                  className="w-full text-sm border rounded-lg px-3 py-2"
+                />
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"

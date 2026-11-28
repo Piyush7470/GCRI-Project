@@ -302,7 +302,7 @@ function LightAssessmentReviewContent({ assessmentId }: { assessmentId: string }
         <InfoCard title="Assessment type" value={session.assessmentType} />
         <InfoCard title="Framework version" value={session.frameworkVersion} />
         <InfoCard
-          title="Auditor"
+          title="Assessor"
           value={
             <>
               <span className="flex items-center gap-1.5">

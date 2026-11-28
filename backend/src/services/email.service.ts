@@ -1,4 +1,8 @@
 import nodemailer, { Transporter } from "nodemailer";
+import {
+  formatDurationFromHours,
+  formatDurationFromMinutes,
+} from "../utils/formatDuration.js";
 
 export interface SendEmailOptions {
   to: string | string[];
@@ -8,12 +12,21 @@ export interface SendEmailOptions {
 }
 
 function appBaseUrl(): string {
-  return (
+  const raw =
     process.env.CLIENT_BASE_URL ||
+    process.env.FRONTEND_URL ||
     process.env.APP_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    "http://localhost:3000"
-  ).replace(/\/$/, "");
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:3000");
+
+  if (!raw?.trim()) {
+    console.warn(
+      "[EmailService] CLIENT_BASE_URL (or FRONTEND_URL / APP_URL) is not set. Email buttons will not point at your deployed frontend."
+    );
+    return "http://localhost:3000";
+  }
+
+  return raw.replace(/\/$/, "");
 }
 
 function fromAddress(): string {
@@ -56,6 +69,7 @@ class TransactionalEmailService {
       console.log(
         `[EmailService] SMTP configured → ${host}:${port} as ${user} (app: ${appName}, from: ${fromAddress()})`
       );
+      console.log(`[EmailService] Email link base (frontend): ${appBaseUrl()}`);
     } else {
       this.isConfigured = false;
       console.warn(
@@ -177,13 +191,13 @@ class TransactionalEmailService {
     const orgText = params.organizationName
       ? ` at <strong>${params.organizationName}</strong>`
       : "";
-    const hours = params.expiresInHours || 48;
+    const expiryLabel = formatDurationFromHours(params.expiresInHours || 48);
 
     const content = `
       <p>Hello ${params.recipientName},</p>
       <p>You have been invited to join the <strong>GRAICE Assessment Platform</strong> as an <strong>${params.role}</strong>${orgText}.</p>
       <p>The GRAICE Platform provides authoritative responsible AI governance evaluations aligned with EU AI Act, NIST AI RMF, and ISO 42001.</p>
-      <p>Please click the button below to set your password and activate your account. This invitation link will expire in <strong>${hours} hours</strong>.</p>
+      <p>Please click the button below to set your password and activate your account. This invitation link will expire in <strong>${expiryLabel}</strong>.</p>
     `;
 
     return this.sendEmail({
@@ -202,10 +216,10 @@ class TransactionalEmailService {
     resetUrl: string;
     expiresInMinutes?: number;
   }) {
-    const minutes = params.expiresInMinutes || 60;
+    const expiryLabel = formatDurationFromMinutes(params.expiresInMinutes || 60);
     const content = `
       <p>We received a request to reset the password for your GRAICE Assessment Platform account.</p>
-      <p>Click the button below to choose a new password. For security, this link is single-use and will expire in <strong>${minutes} minutes</strong>.</p>
+      <p>Click the button below to choose a new password. For security, this link is single-use and will expire in <strong>${expiryLabel}</strong>.</p>
       <p style="margin-top: 20px; padding: 12px; background-color: #FEF3C7; border-left: 4px solid #F59E0B; font-size: 13px; color: #92400E; border-radius: 4px;">
         <strong>Security Notice:</strong> If you did not request a password reset, please ignore this email or contact your administrator immediately.
       </p>
@@ -263,11 +277,16 @@ class TransactionalEmailService {
       </table>
     `;
 
+    const dashboardUrl = `${appBaseUrl()}/organizations`;
+
     return this.sendEmail({
       to: params.adminEmails,
       subject: `[Admin Alert] New Organization Onboarded: ${params.companyName}`,
-      html: this.renderBaseTemplate("New Organization Onboarded", content),
-      text: `New company ${params.companyName} (${params.domain}) onboarded by ${params.actorEmail}. Status: ${params.verificationStatus}`,
+      html: this.renderBaseTemplate("New Organization Onboarded", content, {
+        text: "Open Organizations",
+        url: dashboardUrl,
+      }),
+      text: `New company ${params.companyName} (${params.domain}) onboarded by ${params.actorEmail}. Status: ${params.verificationStatus}. Review: ${dashboardUrl}`,
     });
   }
 
@@ -286,11 +305,16 @@ class TransactionalEmailService {
       <p>Please log in to the Administrative Dashboard to review the organization profile and apply a manual verification override if appropriate.</p>
     `;
 
+    const dashboardUrl = `${appBaseUrl()}/organizations`;
+
     return this.sendEmail({
       to: params.adminEmails,
       subject: `[Admin Action Required] Domain Verification Pending: ${params.companyName}`,
-      html: this.renderBaseTemplate("Domain Verification Review Required", content),
-      text: `Domain verification failed for ${params.companyName} (${params.domain}). Reason: ${params.reason}`,
+      html: this.renderBaseTemplate("Domain Verification Review Required", content, {
+        text: "Review Organization",
+        url: dashboardUrl,
+      }),
+      text: `Domain verification failed for ${params.companyName} (${params.domain}). Reason: ${params.reason}. Review: ${dashboardUrl}`,
     });
   }
 
@@ -330,6 +354,7 @@ class TransactionalEmailService {
     score: number;
     maturityLevel: string;
     reportDownloadUrl?: string;
+    viewResultsUrl?: string;
   }) {
     const content = `
       <p>The Responsible AI Governance assessment for <strong>${params.companyName}</strong> has been finalized and submitted.</p>
@@ -343,7 +368,9 @@ class TransactionalEmailService {
 
     const button = params.reportDownloadUrl
       ? { text: "Download Executive PDF Report", url: params.reportDownloadUrl }
-      : undefined;
+      : params.viewResultsUrl
+        ? { text: "Open Assessment Results", url: params.viewResultsUrl }
+        : undefined;
 
     return this.sendEmail({
       to: params.recipientEmail,

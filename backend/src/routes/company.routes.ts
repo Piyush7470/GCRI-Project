@@ -74,7 +74,7 @@ const router = Router();
 router.post(
   "/",
   authenticate,
-  authorize("TenantAdmin", "Admin"),
+  authorize("SuperAdmin", "TenantAdmin", "Admin"),
   validateRequest(CreateCompanySchema),
   createCompany
 );

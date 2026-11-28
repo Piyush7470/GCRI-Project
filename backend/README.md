@@ -62,7 +62,7 @@ curl http://localhost:5001/api/v1/health
 **Production CORS:** set `CORS_ORIGIN=https://gcrai-fe.vercel.app` (comma-separate multiple origins). The API also allows that Vercel URL by default.
 
 ### 4. SMTP (transactional email)
-Copy SMTP variables from `.env.example` (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `CLIENT_BASE_URL`). On startup, logs should show `[EmailService] SMTP configured`.
+Copy SMTP variables from `.env.example` (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `CLIENT_BASE_URL`). Set `CLIENT_BASE_URL` to your deployed frontend (e.g. `https://gcri-project.vercel.app`) so invite, password-reset, and assessment email buttons do not point at `localhost:3000`. On startup, logs should show `[EmailService] SMTP configured` and `Email link base (frontend): …`.
 
 **Verify in the app:**
 

@@ -3,6 +3,7 @@ import { beginApiRequest, endApiRequest } from "@/lib/apiLoadingStore";
 import { ApiResponse } from "@/types/api.types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
+const REQUEST_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS) || 30_000;
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -51,9 +52,13 @@ export async function apiRequest<T = any>(
     }
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   try {
     const response = await fetch(url, {
       ...customConfig,
+      signal: controller.signal,
       body: isFormData
         ? rawBody
         : rawBody !== undefined && rawBody !== null
@@ -116,7 +121,15 @@ export async function apiRequest<T = any>(
     }
 
     return data as ApiResponse<T>;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `Request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. Check your connection or try again.`
+      );
+    }
+    throw err;
   } finally {
+    clearTimeout(timeoutId);
     endApiRequest();
   }
 }

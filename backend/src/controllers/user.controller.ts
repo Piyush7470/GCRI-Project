@@ -14,6 +14,8 @@ import {
   normalizeUserRole,
   resolveUserTenantClaims,
 } from "../middlewares/auth.js";
+import { assertCompanyAllowsUserAssignment } from "../services/companyUserPolicy.service.js";
+import { isPasswordAcceptable } from "../utils/passwordStrength.js";
 
 /**
  * Get profile of currently authenticated user
@@ -213,7 +215,7 @@ export async function getUserById(req: Request, res: Response, next: NextFunctio
 /**
  * Invite a new user, assessor, or admin (SuperAdmin or Admin)
  * SuperAdmins can invite Admins for a specific company or Assessors.
- * Org Admins can only invite Assessors or MembershipApprovers for their own company.
+ * Tenant Admins can only invite Assessors for their workspace.
  * SuperAdmin is sole/platform-seeded and cannot be invited.
  */
 export async function inviteUser(req: Request, res: Response, next: NextFunction) {
@@ -224,28 +226,33 @@ export async function inviteUser(req: Request, res: Response, next: NextFunction
     const actorEmail = req.user?.email || "unknown";
     const targetRole = normalizeUserRole(role);
 
-    if (actorRole === "SuperAdmin" && targetRole === "Auditor") {
-      return sendError(
-        res,
-        "Each level can only create the level directly beneath it. SuperAdmin can only invite a TenantAdmin.",
-        403,
-        "HIERARCHY_VIOLATION"
-      );
-    }
-
     if (actorRole === "SuperAdmin" && targetRole === "TenantAdmin" && !inviteTenantId) {
       return sendError(
         res,
-        "Tenant ID (tenantId) is required when inviting a TenantAdmin.",
+        "Tenant ID (tenantId) is required when inviting a Tenant Admin.",
         400,
         "TENANT_ID_REQUIRED"
+      );
+    }
+
+    if (
+      actorRole === "SuperAdmin" &&
+      targetRole === "Auditor" &&
+      !inviteTenantId &&
+      !companyId
+    ) {
+      return sendError(
+        res,
+        "Select a tenant workspace (tenantId) or organization when inviting an Assessor.",
+        400,
+        "TENANT_OR_ORG_REQUIRED"
       );
     }
 
     if (actorRole === "TenantAdmin" && targetRole !== "Auditor") {
       return sendError(
         res,
-        "Tenant Admins can only invite Auditors into their workspace.",
+        "Tenant Admins can only invite Assessors into their workspace.",
         403,
         "HIERARCHY_VIOLATION"
       );
@@ -275,18 +282,16 @@ export async function inviteUser(req: Request, res: Response, next: NextFunction
       if (req.user?.companyId) {
         targetCompanyId = req.user.companyId;
       }
-    } else if (actorRole === "SuperAdmin" && targetRole !== "TenantAdmin") {
-      if (role === "Admin" && !companyId) {
-        return sendError(
-          res,
-          "Organization ID (companyId) is required when inviting an Admin for an organization.",
-          400,
-          "COMPANY_ID_REQUIRED"
-        );
-      }
     }
 
     const cleanEmail = email.toLowerCase().trim();
+
+    try {
+      await assertCompanyAllowsUserAssignment(targetCompanyId);
+    } catch (policyErr: unknown) {
+      const e = policyErr as Error & { statusCode?: number; code?: string };
+      return sendError(res, e.message, e.statusCode || 403, e.code || "ORGANIZATION_SUSPENDED");
+    }
 
     const existing = await User.findOne({ email: cleanEmail });
     if (existing) {
@@ -371,6 +376,151 @@ export async function inviteUser(req: Request, res: Response, next: NextFunction
           invitationExpires: expires,
         },
         invitationToken: rawToken, // Provided for direct testing & outbound delivery
+      },
+      201
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Create a user with an initial password (SuperAdmin or Tenant Admin).
+ * Roles limited to Tenant Admin and Assessor.
+ */
+export async function adminCreateUser(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { email, name, password, role, companyId, tenantId: bodyTenantId } = req.body;
+    const actorId = req.user?.userId;
+    const actorRole = normalizeUserRole(req.user?.role);
+    const actorEmail = req.user?.email || "unknown";
+    const targetRole = normalizeUserRole(role);
+
+    if (!isPasswordAcceptable(password)) {
+      return sendError(
+        res,
+        "Password must be at least 8 characters with mixed character types (not weak).",
+        400,
+        "WEAK_PASSWORD"
+      );
+    }
+
+    if (targetRole !== "TenantAdmin" && targetRole !== "Auditor") {
+      return sendError(
+        res,
+        "Only Tenant Admin and Assessor accounts can be created here.",
+        400,
+        "INVALID_ROLE"
+      );
+    }
+
+    if (actorRole === "TenantAdmin" && targetRole !== "Auditor") {
+      return sendError(
+        res,
+        "Tenant Admins can only create Assessor accounts.",
+        403,
+        "HIERARCHY_VIOLATION"
+      );
+    }
+
+    const inviteTenantId =
+      bodyTenantId && Types.ObjectId.isValid(bodyTenantId)
+        ? bodyTenantId
+        : actorRole === "TenantAdmin" && req.user?.tenantId
+          ? req.user.tenantId
+          : undefined;
+
+    if (actorRole === "SuperAdmin" && targetRole === "TenantAdmin" && !inviteTenantId) {
+      return sendError(
+        res,
+        "Tenant ID (tenantId) is required when creating a Tenant Admin.",
+        400,
+        "TENANT_ID_REQUIRED"
+      );
+    }
+
+    let targetCompanyId = companyId;
+    if (actorRole === "TenantAdmin" && req.user?.companyId) {
+      targetCompanyId = req.user.companyId;
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const existing = await User.findOne({ email: cleanEmail });
+    if (existing) {
+      return sendError(
+        res,
+        "An account with this email address already exists",
+        409,
+        "USER_EXISTS"
+      );
+    }
+
+    try {
+      await assertCompanyAllowsUserAssignment(targetCompanyId);
+    } catch (policyErr: unknown) {
+      const e = policyErr as Error & { statusCode?: number; code?: string };
+      return sendError(res, e.message, e.statusCode || 403, e.code || "ORGANIZATION_SUSPENDED");
+    }
+
+    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12", 10);
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const storedRole = targetRole === "Auditor" ? "Auditor" : "TenantAdmin";
+
+    const user = await User.create({
+      email: cleanEmail,
+      name,
+      role: storedRole,
+      passwordHash,
+      companyId: targetCompanyId || undefined,
+      tenantId:
+        inviteTenantId && Types.ObjectId.isValid(inviteTenantId)
+          ? new Types.ObjectId(inviteTenantId)
+          : undefined,
+      status: "Active",
+      invitedBy: actorId,
+    });
+
+    if (
+      (targetRole === "TenantAdmin" || targetRole === "Auditor") &&
+      (user.tenantId || inviteTenantId)
+    ) {
+      const tid = user.tenantId || new Types.ObjectId(inviteTenantId);
+      await TenantMembership.findOneAndUpdate(
+        { tenantId: tid, userId: user._id },
+        {
+          $set: {
+            role: targetRole === "TenantAdmin" ? "TenantAdmin" : "Auditor",
+            status: "Active",
+            acceptedAt: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    }
+
+    await AuditLog.create({
+      actorId,
+      actorEmail,
+      action: "USER_CREATED_BY_ADMIN",
+      entity: "User",
+      entityId: user._id.toString(),
+      after: { email: user.email, role: user.role, companyId: user.companyId },
+      ipAddress: req.ip,
+      userAgent: req.headers["user-agent"],
+    });
+
+    return sendSuccess(
+      res,
+      {
+        message: "User created successfully",
+        user: {
+          id: user._id,
+          userId: user._id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          companyId: user.companyId,
+        },
       },
       201
     );
@@ -643,18 +793,21 @@ export async function updateUserRole(req: Request, res: Response, next: NextFunc
       );
     }
 
-    // Guard: An Admin must belong to an organization
-    if (role === "Admin" && !user.companyId) {
+    const previousRole = user.role;
+    const normalizedAssign = normalizeUserRole(role);
+    if (normalizedAssign === "Auditor") {
+      user.role = "Auditor";
+    } else if (normalizedAssign === "TenantAdmin") {
+      user.role = "TenantAdmin";
+    } else {
       return sendError(
         res,
-        "Cannot promote user to Organization Admin without an associated organization (companyId).",
+        "Role must be Tenant Admin or Assessor.",
         400,
-        "COMPANY_ASSOCIATION_REQUIRED"
+        "INVALID_ROLE"
       );
     }
 
-    const previousRole = user.role;
-    user.role = role;
     await user.save();
 
     await AuditLog.create({
@@ -860,9 +1013,29 @@ export async function adminUpdateUser(
 
     if (name !== undefined) user.name = name;
     if (phone !== undefined) user.phone = phone;
-    if (actorRole === "SuperAdmin" && companyId !== undefined) user.companyId = companyId;
+    if (actorRole === "SuperAdmin" && companyId !== undefined) {
+      try {
+        await assertCompanyAllowsUserAssignment(companyId);
+      } catch (policyErr: unknown) {
+        const e = policyErr as Error & { statusCode?: number; code?: string };
+        return sendError(res, e.message, e.statusCode || 403, e.code || "ORGANIZATION_SUSPENDED");
+      }
+      user.companyId = companyId;
+    }
     if (actorRole === "SuperAdmin" && role !== undefined && role !== "SuperAdmin") {
-      user.role = role;
+      const normalized = normalizeUserRole(role);
+      if (normalized === "Auditor") {
+        user.role = "Auditor";
+      } else if (normalized === "TenantAdmin") {
+        user.role = "TenantAdmin";
+      } else {
+        return sendError(
+          res,
+          "Role must be Tenant Admin or Assessor.",
+          400,
+          "INVALID_ROLE"
+        );
+      }
     }
     if (status !== undefined) user.status = status;
 

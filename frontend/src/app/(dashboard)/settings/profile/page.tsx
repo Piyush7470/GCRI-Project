@@ -6,7 +6,6 @@ import { userService } from "@/services/user.service";
 import {
   User as UserIcon,
   Mail,
-  Phone,
   Shield,
   Building2,
   Check,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { ProfileSettingsSkeleton } from "@/components/shared/PageSkeletons";
+import { PhoneInput } from "@/components/shared/PhoneInput";
 import { ImageUploader } from "@/components/shared/ImageUploader";
 import { EntityImage } from "@/components/shared/EntityImage";
 
@@ -164,28 +164,18 @@ export default function ProfileSettingsPage() {
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g., Alex Vance"
+                  placeholder="Enter name"
                   className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
                 />
               </div>
             </div>
 
-            {/* Phone Number */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Contact Phone Number
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+1 (555) 000-0000"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-                />
-              </div>
-            </div>
+            <PhoneInput
+              label="Contact phone number"
+              value={phone}
+              onChange={setPhone}
+              placeholder="Enter number without country code"
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 pt-2 border-t border-slate-100">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { UsersTableSkeleton } from "@/components/shared/PageSkeletons";
 import {
   Users,
@@ -28,25 +28,62 @@ import {
   X,
   UserCheck,
   Lock,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 import {
   userService,
   InviteUserResponse,
   AdminResetPasswordResponse,
 } from "@/services/user.service";
-import { companyService } from "@/services/company.service";
 import { User, UserRole, UserStatus } from "@/types/auth.types";
-import { Company } from "@/types/company.types";
 import { useAuth } from "@/context/AuthContext";
 import { useTenant } from "@/context/TenantContext";
 import { EntityImage } from "@/components/shared/EntityImage";
-import { MetricListModal, MetricListRow } from "@/components/shared/MetricListModal";
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { getAppOrigin } from "@/lib/appUrl";
+import { formatDurationFromMinutes, formatDurationUntil } from "@/lib/utils";
+import { PasswordInput } from "@/components/shared/PasswordInput";
+import { PhoneInput } from "@/components/shared/PhoneInput";
+import { isPasswordAcceptable } from "@/lib/passwordStrength";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import {
+  loadOrganizationPicklist,
+  loadPageSizeOptions,
+  loadUserRoleOptions,
+  loadUserStatusOptions,
+} from "@/lib/searchSelectLoaders";
+import {
+  noneOrganizationOption,
+  noneUserScopeOption,
+  userRoleFilterOptions,
+  userStatusFilterOptions,
+} from "@/lib/searchSelectOptions";
+import { UserFilterSearch } from "@/components/features/users/UserFilterSearch";
 
 export default function AdminAssessorsPage() {
   const { isSuperAdmin, isOrgAdmin, isTenantAdmin, user: currentUser } = useAuth();
+
+  const loadOrgInviteOptions = useCallback(
+    async (params: { search: string; page: number; limit: number }) => {
+      const res = await loadOrganizationPicklist(params);
+      if (params.page === 1 && !params.search.trim()) {
+        return { items: [noneUserScopeOption, ...res.items], hasMore: res.hasMore };
+      }
+      return res;
+    },
+    []
+  );
+
+  const loadOrgDirectOptions = useCallback(
+    async (params: { search: string; page: number; limit: number }) => {
+      const res = await loadOrganizationPicklist(params);
+      if (params.page === 1 && !params.search.trim()) {
+        return { items: [noneOrganizationOption, ...res.items], hasMore: res.hasMore };
+      }
+      return res;
+    },
+    []
+  );
   const { activeTenantId } = useTenant();
   // Live State
   const [users, setUsers] = useState<User[]>([]);
@@ -68,9 +105,6 @@ export default function AdminAssessorsPage() {
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Companies for dropdowns
-  const [companies, setCompanies] = useState<Company[]>([]);
-
   // Modal 1: 48h Invitation Modal State
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -88,7 +122,6 @@ export default function AdminAssessorsPage() {
   const [directAddModalOpen, setDirectAddModalOpen] = useState(false);
   const [directAddLoading, setDirectAddLoading] = useState(false);
   const [directAddError, setDirectAddError] = useState<string | null>(null);
-  const [showDirectPassword, setShowDirectPassword] = useState(false);
   const [directAddForm, setDirectAddForm] = useState({
     name: "",
     email: "",
@@ -121,7 +154,35 @@ export default function AdminAssessorsPage() {
   // Active Dropdown Action Row
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
-  const [metricModal, setMetricModal] = useState<"all" | "active" | "assessors" | "admins" | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const scrollToList = () => {
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const applyMetricTile = (preset: "all" | "active" | "assessors" | "admins") => {
+    setPage(1);
+    setSearch("");
+    switch (preset) {
+      case "active":
+        setRoleFilter("all");
+        setStatusFilter("Active");
+        break;
+      case "assessors":
+        setRoleFilter("Assessor");
+        setStatusFilter("all");
+        break;
+      case "admins":
+        setRoleFilter("TenantAdmin");
+        setStatusFilter("all");
+        break;
+      default:
+        setRoleFilter("all");
+        setStatusFilter("all");
+        break;
+    }
+    scrollToList();
+  };
 
   // Debounce search
   useEffect(() => {
@@ -131,18 +192,6 @@ export default function AdminAssessorsPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
-
-  // Load Companies
-  useEffect(() => {
-    companyService
-      .getCompanies({ limit: 100 })
-      .then((res) => {
-        if (res.data) setCompanies(res.data);
-      })
-      .catch((err) => {
-        console.warn("Could not fetch companies for dropdown:", err);
-      });
-  }, []);
 
   // Fetch Users Live from Backend
   const fetchUsers = useCallback(async () => {
@@ -291,33 +340,40 @@ export default function AdminAssessorsPage() {
     setDirectAddLoading(true);
     setDirectAddError(null);
 
+    if (!isPasswordAcceptable(directAddForm.password)) {
+      setDirectAddError(
+        "Password must be at least 8 characters with mixed character types (not weak)."
+      );
+      setDirectAddLoading(false);
+      return;
+    }
+
+    if (
+      isSuperAdmin &&
+      directAddForm.role === "TenantAdmin" &&
+      !activeTenantId
+    ) {
+      setDirectAddError(
+        "Select a tenant in the header workspace switcher before creating a Tenant Admin."
+      );
+      setDirectAddLoading(false);
+      return;
+    }
+
     try {
-      const regRes = await userService.registerDirectUser({
+      await userService.registerDirectUser({
         name: directAddForm.name.trim(),
         email: directAddForm.email.trim(),
         password: directAddForm.password,
         role: directAddForm.role,
+        companyId: directAddForm.companyId || undefined,
+        tenantId:
+          directAddForm.role === "TenantAdmin" && activeTenantId
+            ? activeTenantId
+            : (isTenantAdmin || isOrgAdmin) && activeTenantId
+              ? activeTenantId
+              : undefined,
       });
-
-      // If custom role or company selected, apply it immediately via adminUpdateUser
-      const createdUserId =
-        (regRes as any)?.data?.userId ||
-        (regRes as any)?.data?.user?.id ||
-        (regRes as any)?.data?._id;
-
-      if (
-        createdUserId &&
-        (directAddForm.role !== "Assessor" || directAddForm.companyId)
-      ) {
-        try {
-          await userService.adminUpdateUser(createdUserId, {
-            role: directAddForm.role,
-            companyId: directAddForm.companyId ? directAddForm.companyId : undefined,
-          });
-        } catch (updateErr) {
-          console.warn("Could not set custom role/organization after register:", updateErr);
-        }
-      }
 
       setDirectAddModalOpen(false);
       setActionSuccess(`Account created successfully for ${directAddForm.email}!`);
@@ -410,13 +466,15 @@ export default function AdminAssessorsPage() {
           </span>
         );
       case "Admin":
+      case "TenantAdmin":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-purple-50/80 text-purple-700 border border-purple-200/80 shadow-2xs">
             <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
-            Org Admin
+            Tenant Admin
           </span>
         );
       case "Assessor":
+      case "Auditor":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-blue-50/80 text-blue-700 border border-blue-200/80 shadow-2xs">
             <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
@@ -425,9 +483,9 @@ export default function AdminAssessorsPage() {
         );
       case "MembershipApprover":
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-50/80 text-amber-700 border border-amber-200/80 shadow-2xs">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-            Approver
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-blue-50/80 text-blue-700 border border-blue-200/80 shadow-2xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            Assessor
           </span>
         );
       default:
@@ -478,42 +536,12 @@ export default function AdminAssessorsPage() {
   // Compact metrics calculated from real data
   const totalCount = paginationMeta.total;
   const activeCount = users.filter((u) => u.status === "Active").length;
-  const adminCount = users.filter((u) => u.role === "Admin" || u.role === "SuperAdmin").length;
-  const assessorCount = users.filter((u) => u.role === "Assessor").length;
-
-  const toUserRow = (u: User): MetricListRow => ({
-    id: u._id,
-    title: u.name || "Unnamed User",
-    subtitle: u.email,
-    meta:
-      typeof u.companyId === "object" && u.companyId?.name
-        ? u.companyId.name
-        : u.role,
-    badge: u.status,
-    badgeTone: u.status === "Active" ? "success" : "warning",
-    imageUrl: u.avatar?.url,
-    imageName: u.name || u.email,
-    imageVariant: "avatar",
-    onClick: () => handleOpenEdit(u),
-  });
-
-  const metricModalRows =
-    metricModal === "active"
-      ? users.filter((u) => u.status === "Active").map(toUserRow)
-      : metricModal === "assessors"
-        ? users.filter((u) => u.role === "Assessor").map(toUserRow)
-        : metricModal === "admins"
-          ? users.filter((u) => u.role === "Admin" || u.role === "SuperAdmin").map(toUserRow)
-          : users.map(toUserRow);
-
-  const metricModalTitle =
-    metricModal === "active"
-      ? "Active Users"
-      : metricModal === "assessors"
-        ? "Assessors"
-        : metricModal === "admins"
-          ? "Admins & Super Admins"
-          : "All Users";
+  const adminCount = users.filter(
+    (u) => u.role === "Admin" || u.role === "TenantAdmin" || u.role === "SuperAdmin"
+  ).length;
+  const assessorCount = users.filter(
+    (u) => u.role === "Assessor" || u.role === "Auditor"
+  ).length;
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 space-y-3 overflow-hidden">
@@ -547,67 +575,46 @@ export default function AdminAssessorsPage() {
           icon={Users}
           value={totalCount}
           label="Total Users"
-          subtext="▲ Live in DB · Click to list"
-          onClick={() => setMetricModal("all")}
+          subtext="▲ Live in DB · Filter list below"
+          onClick={() => applyMetricTile("all")}
         />
         <SummaryMetricTile
           tone="emerald"
           icon={CheckCircle2}
           value={activeCount}
           label="Active Users"
-          subtext="● On this page · Click to list"
-          onClick={() => setMetricModal("active")}
+          subtext="Filter: Active status"
+          onClick={() => applyMetricTile("active")}
         />
         <SummaryMetricTile
           tone="teal"
           icon={UserCheck}
           value={assessorCount}
           label="Assessors"
-          subtext="Auditing Team · Click to list"
-          onClick={() => setMetricModal("assessors")}
+          subtext="Filter: Assessor role"
+          onClick={() => applyMetricTile("assessors")}
         />
         <SummaryMetricTile
           tone="blue"
           icon={Shield}
           value={adminCount}
           label="Admins"
-          subtext="Full Privileges · Click to list"
-          onClick={() => setMetricModal("admins")}
+          subtext="Filter: Tenant Admin role"
+          onClick={() => applyMetricTile("admins")}
         />
       </div>
-
-      <MetricListModal
-        open={metricModal !== null}
-        onClose={() => setMetricModal(null)}
-        title={metricModalTitle}
-        description="Users matching this summary metric"
-        emptyMessage="No users match this metric."
-        rows={metricModalRows}
-      />
 
       {/* Filter & Action Toolbar (Fixed) */}
       <div className="bg-white rounded-xl border border-slate-200/90 p-2.5 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 shrink-0">
         {/* Left: Search & Filter Dropdowns */}
         <div className="flex items-center gap-2 flex-1 flex-wrap">
           {/* Search Input */}
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search users by name or email..."
-              className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+          <UserFilterSearch
+            className="flex-1 min-w-[180px] max-w-xs"
+            value={search}
+            onChange={setSearch}
+            role={roleFilter !== "all" ? roleFilter : undefined}
+          />
 
           {/* Filter Dropdowns */}
           <div className="flex items-center gap-1.5 flex-wrap text-xs">
@@ -615,33 +622,33 @@ export default function AdminAssessorsPage() {
               <Filter className="h-3 w-3 text-slate-400" />
             </div>
 
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[7.5rem]"
               value={roleFilter}
-              onChange={(e) => {
-                setRoleFilter(e.target.value);
+              onChange={(v) => {
+                setRoleFilter(v);
                 setPage(1);
               }}
-              className="text-xs font-medium py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-            >
-              <option value="all">All Roles</option>
-              {isSuperAdmin && <option value="SuperAdmin">Super Admin</option>}
-              <option value="Admin">Org Admin</option>
-              <option value="Assessor">Assessor</option>
-              <option value="MembershipApprover">Membership Approver</option>
-            </select>
+              staticOptions={userRoleFilterOptions(isSuperAdmin)}
+              searchPlaceholder="Search roles…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[7.5rem]"
               value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
+              onChange={(v) => {
+                setStatusFilter(v);
                 setPage(1);
               }}
-              className="text-xs font-medium py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Deactivated">Deactivated</option>
-            </select>
+              staticOptions={userStatusFilterOptions}
+              searchPlaceholder="Search status…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
             {(roleFilter !== "all" || statusFilter !== "all" || search) && (
               <button
@@ -690,29 +697,33 @@ export default function AdminAssessorsPage() {
             <span>Send 48h Invite</span>
           </button>
 
-          <button
-            onClick={() => {
-              setDirectAddForm({
-                name: "",
-                email: "",
-                password: "",
-                role: "Assessor",
-                companyId: "",
-              });
-              setDirectAddError(null);
-              setShowDirectPassword(false);
-              setDirectAddModalOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700 text-white font-semibold text-xs rounded-lg shadow-xs transition"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            <span>Add User</span>
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={() => {
+                setDirectAddForm({
+                  name: "",
+                  email: "",
+                  password: "",
+                  role: "Assessor",
+                  companyId: "",
+                });
+                setDirectAddError(null);
+                setDirectAddModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700 text-white font-semibold text-xs rounded-lg shadow-xs transition"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              <span>Add Assessor</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Users Data Table - Fixed Header & Scrollable Body */}
-      <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs flex flex-col flex-1 min-h-0 overflow-hidden">
+      <div
+        ref={listRef}
+        className="bg-white rounded-xl border border-slate-200/90 shadow-xs flex flex-col flex-1 min-h-0 overflow-hidden scroll-mt-4"
+      >
         <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0 [scrollbar-width:thin]">
           <table className="w-full text-left border-collapse text-xs">
             <thead className="sticky top-0 z-10 bg-slate-50 shadow-xs border-b border-slate-200">
@@ -950,20 +961,19 @@ export default function AdminAssessorsPage() {
             {/* Rows Per Page Selector (20, 50, 100) */}
             <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
               <span className="text-[11px] text-slate-500">Rows:</span>
-              <select
-                value={limit}
-                onChange={(e) => {
-                  const newLimit = Number(e.target.value);
-                  setLimit(newLimit);
+              <AsyncSearchSelect
+                compact
+                className="w-28"
+                value={String(limit)}
+                onChange={(v) => {
+                  setLimit(Number(v));
                   setPage(1);
                 }}
-                className="py-0.5 px-2 text-xs font-semibold bg-white border border-slate-300 rounded-md text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
+                loadOptions={loadPageSizeOptions}
+                searchPlaceholder="Rows per page…"
+                allowCustom={false}
+                pageSize={8}
+              />
             </div>
           </div>
 
@@ -1035,19 +1045,22 @@ export default function AdminAssessorsPage() {
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Invitation Acceptance Link (Valid 48h)
+                      Invitation link
+                      {inviteResult.user.invitationExpires
+                        ? ` (valid for ${formatDurationUntil(inviteResult.user.invitationExpires)})`
+                        : ` (valid for ${formatDurationFromMinutes(48 * 60)})`}
                     </label>
                     <div className="flex items-center gap-1.5">
                       <input
                         type="text"
                         readOnly
-                        value={`${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/accept-invite?token=${inviteResult.invitationToken}`}
+                        value={`${getAppOrigin()}/accept-invite?token=${inviteResult.invitationToken}`}
                         className="w-full text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg p-2 text-slate-800 select-all"
                       />
                       <button
                         type="button"
                         onClick={() => {
-                          const link = `${typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/accept-invite?token=${inviteResult.invitationToken}`;
+                          const link = `${getAppOrigin()}/accept-invite?token=${inviteResult.invitationToken}`;
                           navigator.clipboard.writeText(link);
                           setCopiedInvite(true);
                           setTimeout(() => setCopiedInvite(false), 3000);
@@ -1098,7 +1111,7 @@ export default function AdminAssessorsPage() {
                       onChange={(e) =>
                         setInviteForm({ ...inviteForm, name: e.target.value })
                       }
-                      placeholder="e.g. Sarah Jenkins"
+                      placeholder={fieldPlaceholder.name}
                       className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                     />
                   </div>
@@ -1114,65 +1127,39 @@ export default function AdminAssessorsPage() {
                       onChange={(e) =>
                         setInviteForm({ ...inviteForm, email: e.target.value })
                       }
-                      placeholder="e.g. sarah.jenkins@company.com"
+                      placeholder={fieldPlaceholder.email}
                       className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        System Role *
-                      </label>
-                      <select
-                        value={inviteForm.role}
-                        onChange={(e) =>
-                          setInviteForm({
-                            ...inviteForm,
-                            role: e.target.value as UserRole,
-                          })
-                        }
-                        className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
-                      >
-                        {isSuperAdmin && (
-                          <option value="TenantAdmin">Tenant Admin</option>
-                        )}
-                        {(isTenantAdmin || (!isSuperAdmin && isOrgAdmin)) && (
-                          <>
-                            <option value="Auditor">Auditor</option>
-                            <option value="Assessor">Auditor (legacy label)</option>
-                          </>
-                        )}
-                        {!isSuperAdmin && !isTenantAdmin && (
-                          <option value="Assessor">Assessor</option>
-                        )}
-                        {isSuperAdmin && <option value="Admin">Org Admin (legacy)</option>}
-                        {!isTenantAdmin && (
-                          <option value="MembershipApprover">Membership Approver</option>
-                        )}
-                      </select>
-                    </div>
+                    <AsyncSearchSelect
+                      label="System role *"
+                      value={inviteForm.role}
+                      onChange={(role) =>
+                        setInviteForm({
+                          ...inviteForm,
+                          role: role as UserRole,
+                        })
+                      }
+                      loadOptions={loadUserRoleOptions}
+                      searchPlaceholder="Search roles…"
+                      allowCustom={false}
+                      pageSize={8}
+                    />
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Organization
-                      </label>
-                      <select
-                        value={inviteForm.companyId}
-                        onChange={(e) =>
-                          setInviteForm({ ...inviteForm, companyId: e.target.value })
-                        }
-                        disabled={isTenantAdmin}
-                        className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer disabled:opacity-60"
-                      >
-                        <option value="">None / tenant-scoped</option>
-                        {companies.map((c) => (
-                          <option key={c._id} value={c._id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    <AsyncSearchSelect
+                      label="Organization"
+                      value={inviteForm.companyId}
+                      onChange={(companyId) => setInviteForm({ ...inviteForm, companyId })}
+                      disabled={isTenantAdmin}
+                      placeholder="None / tenant-scoped"
+                      emptyValue=""
+                      loadOptions={loadOrgInviteOptions}
+                      searchPlaceholder="Search organizations…"
+                      allowCustom={false}
+                      pageSize={8}
+                    />
                   </div>
                   {isSuperAdmin && inviteForm.role === "TenantAdmin" && !activeTenantId && (
                     <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
@@ -1258,7 +1245,7 @@ export default function AdminAssessorsPage() {
                   onChange={(e) =>
                     setDirectAddForm({ ...directAddForm, name: e.target.value })
                   }
-                  placeholder="e.g. Michael Thorne"
+                  placeholder={fieldPlaceholder.name}
                   className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                 />
               </div>
@@ -1274,82 +1261,48 @@ export default function AdminAssessorsPage() {
                   onChange={(e) =>
                     setDirectAddForm({ ...directAddForm, email: e.target.value })
                   }
-                  placeholder="e.g. michael.thorne@graice.io"
+                  placeholder={fieldPlaceholder.email}
                   className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Initial Password * (min 8 characters)
-                </label>
-                <div className="relative">
-                  <input
-                    type={showDirectPassword ? "text" : "password"}
-                    required
-                    minLength={8}
-                    value={directAddForm.password}
-                    onChange={(e) =>
-                      setDirectAddForm({ ...directAddForm, password: e.target.value })
-                    }
-                    placeholder="••••••••••••"
-                    className="w-full text-xs py-2 pl-3 pr-9 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowDirectPassword(!showDirectPassword)}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-                    tabIndex={-1}
-                  >
-                    {showDirectPassword ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-              </div>
+              <PasswordInput
+                label="Initial password * (min. 8 characters)"
+                value={directAddForm.password}
+                onChange={(password) => setDirectAddForm({ ...directAddForm, password })}
+                required
+                minLength={8}
+                showStrength
+                showRequirementsInfo
+              />
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Initial Role *
-                  </label>
-                  <select
-                    value={directAddForm.role}
-                    onChange={(e) =>
-                      setDirectAddForm({
-                        ...directAddForm,
-                        role: e.target.value as UserRole,
-                      })
-                    }
-                    className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
-                  >
-                    <option value="Assessor">Assessor</option>
-                    {isSuperAdmin && <option value="Admin">Organization Admin</option>}
-                    <option value="MembershipApprover">Membership Approver</option>
-                  </select>
-                </div>
+                <AsyncSearchSelect
+                  label="Initial role *"
+                  value={directAddForm.role}
+                  onChange={(role) =>
+                    setDirectAddForm({
+                      ...directAddForm,
+                      role: role as UserRole,
+                    })
+                  }
+                  loadOptions={loadUserRoleOptions}
+                  searchPlaceholder="Search roles…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Organization
-                  </label>
-                  <select
-                    value={directAddForm.companyId}
-                    onChange={(e) =>
-                      setDirectAddForm({ ...directAddForm, companyId: e.target.value })
-                    }
-                    className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
-                  >
-                    <option value="">None / Independent</option>
-                    {companies.map((c) => (
-                      <option key={c._id} value={c._id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <AsyncSearchSelect
+                  label="Organization"
+                  value={directAddForm.companyId}
+                  onChange={(companyId) => setDirectAddForm({ ...directAddForm, companyId })}
+                  placeholder="None / independent"
+                  emptyValue=""
+                  loadOptions={loadOrgDirectOptions}
+                  searchPlaceholder="Search organizations…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
               </div>
 
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
@@ -1428,18 +1381,12 @@ export default function AdminAssessorsPage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Phone Number
-                </label>
-                <input
-                  type="text"
-                  value={editForm.phone}
-                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                  placeholder="+1 (555) 000-0000"
-                  className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
-                />
-              </div>
+              <PhoneInput
+                label="Phone number"
+                value={editForm.phone}
+                onChange={(phone) => setEditForm({ ...editForm, phone })}
+                placeholder="Enter number without country code"
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1457,57 +1404,39 @@ export default function AdminAssessorsPage() {
                       </span>
                     ) : null}
                   </div>
-                  <select
-                    disabled={!isSuperAdmin || editingUser?.role === "SuperAdmin"}
+                  <AsyncSearchSelect
                     value={editForm.role}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, role: e.target.value as UserRole })
-                    }
-                    className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
-                  >
-                    <option value="Assessor">Assessor</option>
-                    {editForm.role === "SuperAdmin" && (
-                      <option value="SuperAdmin">Super Admin</option>
-                    )}
-                    <option value="Admin">Organization Admin</option>
-                    <option value="MembershipApprover">Membership Approver</option>
-                  </select>
+                    onChange={(role) => setEditForm({ ...editForm, role: role as UserRole })}
+                    disabled={!isSuperAdmin || editingUser?.role === "SuperAdmin"}
+                    loadOptions={loadUserRoleOptions}
+                    searchPlaceholder="Search roles…"
+                    allowCustom={false}
+                    pageSize={8}
+                  />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Status *
-                  </label>
-                  <select
-                    value={editForm.status}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, status: e.target.value as UserStatus })
-                    }
-                    className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
-                  >
-                    <option value="Active">Active</option>
-                    <option value="Deactivated">Deactivated</option>
-                  </select>
-                </div>
+                <AsyncSearchSelect
+                  label="Status *"
+                  value={editForm.status}
+                  onChange={(status) => setEditForm({ ...editForm, status: status as UserStatus })}
+                  loadOptions={loadUserStatusOptions}
+                  searchPlaceholder="Search status…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Organization
-                </label>
-                <select
-                  value={editForm.companyId}
-                  onChange={(e) => setEditForm({ ...editForm, companyId: e.target.value })}
-                  className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition cursor-pointer"
-                >
-                  <option value="">None / Independent Assessor</option>
-                  {companies.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <AsyncSearchSelect
+                label="Organization"
+                value={editForm.companyId}
+                onChange={(companyId) => setEditForm({ ...editForm, companyId })}
+                placeholder="None / independent assessor"
+                emptyValue=""
+                loadOptions={loadOrgDirectOptions}
+                searchPlaceholder="Search organizations…"
+                allowCustom={false}
+                pageSize={8}
+              />
 
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
@@ -1569,7 +1498,10 @@ export default function AdminAssessorsPage() {
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                      Password Reset URL (Expires in 24 Hours)
+                      Password reset URL
+                      {resetResult.expiresAt
+                        ? ` (expires in ${formatDurationUntil(resetResult.expiresAt)})`
+                        : ` (expires in ${formatDurationFromMinutes(24 * 60)})`}
                     </label>
                     <div className="flex items-center gap-1.5">
                       <input

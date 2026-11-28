@@ -276,8 +276,12 @@ export async function getTenants(req: Request, res: Response, next: NextFunction
       filter.status = req.query.status;
     }
     if (req.query.search && typeof req.query.search === "string") {
-      const regex = new RegExp(req.query.search.trim(), "i");
-      filter.$or = [{ name: regex }, { slug: regex }];
+      const term = req.query.search.trim();
+      if (term) {
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(escaped, "i");
+        filter.$or = [{ name: regex }, { slug: regex }];
+      }
     }
 
     const [tenants, total] = await Promise.all([

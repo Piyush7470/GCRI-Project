@@ -5,6 +5,7 @@ import {
   getUsers,
   getUserById,
   inviteUser,
+  adminCreateUser,
   acceptInvite,
   updateUserStatus,
   updateUserRole,
@@ -31,6 +32,7 @@ import {
 import {
   AdminUserIdParamSchema,
   AdminUpdateUserSchema,
+  AdminDirectCreateUserSchema,
 } from "../schemas/adminUser.schema.js";
 
 const router = Router();
@@ -174,9 +176,17 @@ router.delete("/me/avatar", authenticate, deleteMyAvatar);
 router.post(
   "/invite",
   authenticate,
-  authorize("SuperAdmin", "Admin"),
+  authorize("SuperAdmin", "TenantAdmin"),
   validateRequest(InviteUserSchema),
   inviteUser
+);
+
+router.post(
+  "/direct",
+  authenticate,
+  authorize("SuperAdmin", "TenantAdmin"),
+  validateRequest(AdminDirectCreateUserSchema),
+  adminCreateUser
 );
 
 /**

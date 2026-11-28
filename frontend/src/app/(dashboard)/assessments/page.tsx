@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -18,7 +18,6 @@ import { useClientPagination } from "@/hooks/useClientPagination";
 import {
   FileCheck2,
   Plus,
-  Search,
   Filter,
   ArrowRight,
   Clock,
@@ -33,6 +32,12 @@ import {
   RefreshCw,
   Share2,
 } from "lucide-react";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { OrganizationFilterSearch } from "@/components/features/companies/OrganizationFilterSearch";
+import {
+  assessmentStatusFilterOptions,
+  assessmentTypeFilterOptions,
+} from "@/lib/searchSelectOptions";
 
 export default function AssessmentsPage() {
   const router = useRouter();
@@ -46,6 +51,7 @@ export default function AssessmentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [typeFilter, setTypeFilter] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   // Data
   const [auditorAssessments, setAuditorAssessments] = useState<AuditorAssessmentsItem[]>([]);
@@ -75,7 +81,7 @@ export default function AssessmentsPage() {
         const res = await dashboardService.getAdminAssessments({
           status: statusFilter === "All" ? undefined : statusFilter,
           assessmentType: typeFilter === "All" ? undefined : typeFilter,
-          search: searchQuery || undefined,
+          search: debouncedSearch || undefined,
           limit: 100,
         });
         if (res?.data?.assessments) {
@@ -99,26 +105,58 @@ export default function AssessmentsPage() {
   };
 
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
     fetchAssessments();
-  }, [isAdmin, isOrgAdmin, isSuperAdmin, statusFilter, typeFilter]);
+  }, [isAdmin, isOrgAdmin, isSuperAdmin, statusFilter, typeFilter, debouncedSearch]);
+
+  const orgSuggestionPool = useMemo(() => {
+    const names = new Map<string, { name: string; domain?: string }>();
+    const add = (name?: string, domain?: string) => {
+      if (!name?.trim()) return;
+      const key = name.toLowerCase();
+      if (!names.has(key)) names.set(key, { name: name.trim(), domain });
+    };
+
+    if (isOrgAdmin) {
+      tenantSessions.forEach((s) => {
+        if (typeof s.companyId === "object" && s.companyId) {
+          const c = s.companyId as { name?: string; domain?: string };
+          add(c.name, c.domain);
+        }
+      });
+    } else if (isAdmin) {
+      adminAssessments.forEach((a) => {
+        add(a.organization?.name, a.organization?.domain);
+      });
+    } else {
+      auditorAssessments.forEach((a) => {
+        add(a.organization?.name, a.organization?.domain);
+      });
+    }
+    return Array.from(names.values());
+  }, [isOrgAdmin, isAdmin, tenantSessions, adminAssessments, auditorAssessments]);
 
   const filteredTenantSessions = tenantSessions.filter((s) => {
-    if (!searchQuery) return true;
+    if (!debouncedSearch) return true;
     const name =
       typeof s.companyId === "object" && s.companyId
         ? (s.companyId as { name?: string }).name?.toLowerCase() || ""
         : "";
-    return name.includes(searchQuery.toLowerCase());
+    return name.includes(debouncedSearch.toLowerCase());
   });
 
   const tenantPagination = useClientPagination(filteredTenantSessions);
 
   // Client-side search filtering for auditor assessments
   const filteredAuditorAssessments = auditorAssessments.filter((item) => {
-    if (!searchQuery) return true;
+    if (!debouncedSearch) return true;
     const name = item.organization?.name?.toLowerCase() || "";
     const type = item.assessmentType.toLowerCase();
-    const q = searchQuery.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     return name.includes(q) || type.includes(q);
   });
 
@@ -133,7 +171,7 @@ export default function AssessmentsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="page-title page-title-lg font-editorial">Assessments Workspace</h1>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
-              {isAdmin ? "Platform Audit Tracker" : "Auditor Workload"}
+              {isAdmin ? "Platform audit tracker" : "Assessor workload"}
             </span>
           </div>
           <p className="page-subtitle mt-1.5">
@@ -158,43 +196,54 @@ export default function AssessmentsPage() {
 
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900/90 p-4 rounded-xl border border-slate-200/90 dark:border-slate-700 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by client organization..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg text-slate-800 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-800 transition"
-          />
-        </div>
+        <OrganizationFilterSearch
+          className="flex-1 max-w-md"
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search by client organization..."
+          localSuggestions={orgSuggestionPool.length > 0 ? orgSuggestionPool : undefined}
+        />
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Status Filter */}
           <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 font-medium">
-            <Filter className="h-3.5 w-3.5 text-slate-400" /> Status:
+            <Filter className="h-3.5 w-3.5 text-slate-400" /> Filters:
           </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-2 font-medium text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="All">All Statuses</option>
-            <option value="InProgress">In Progress</option>
-            <option value="Submitted">Submitted (Locked)</option>
-            <option value="Archived">Archived</option>
-          </select>
 
-          {/* Assessment Type Filter */}
-          <select
+          <AsyncSearchSelect
+            compact
+            className="min-w-[8rem]"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            staticOptions={assessmentStatusFilterOptions}
+            searchPlaceholder="Search status…"
+            allowCustom={false}
+            pageSize={8}
+          />
+
+          <AsyncSearchSelect
+            compact
+            className="min-w-[9rem]"
             value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg px-2.5 py-2 font-medium text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="All">All Types</option>
-            <option value="Light">Light Assessment (30 Q)</option>
-            <option value="Full">Full Framework</option>
-          </select>
+            onChange={setTypeFilter}
+            staticOptions={assessmentTypeFilterOptions}
+            searchPlaceholder="Search type…"
+            allowCustom={false}
+            pageSize={8}
+          />
+
+          {(statusFilter !== "All" || typeFilter !== "All" || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery("");
+                setStatusFilter("All");
+                setTypeFilter("All");
+              }}
+              className="text-[11px] font-semibold text-teal-600 hover:text-teal-800 hover:underline"
+            >
+              Reset
+            </button>
+          )}
 
           <button
             onClick={fetchAssessments}

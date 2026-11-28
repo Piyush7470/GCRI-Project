@@ -15,6 +15,8 @@ export const companyService = {
     search?: string;
     status?: string;
     verificationStatus?: string;
+    activePlan?: string;
+    tier?: string;
   }) =>
     apiClient.get<Company[]>("/companies", { params }),
 

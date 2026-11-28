@@ -10,7 +10,7 @@ npm run seed:client-accounts
 
 **MFA:** Super Admin and Organization Admin must complete MFA at login. Until an authenticator is enrolled, use **one recovery code** below (each code is single-use).
 
-**Auditor:** Password login only — no MFA.
+**Assessor:** Password login only — no MFA.
 
 ---
 
@@ -56,7 +56,7 @@ npm run seed:client-accounts
 
 ---
 
-## Auditor / Assessor
+## Assessor (field role)
 
 | Field | Value |
 |--------|--------|

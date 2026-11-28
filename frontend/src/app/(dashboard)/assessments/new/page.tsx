@@ -2,6 +2,8 @@
 
 import React, { Suspense, useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { loadOrganizationPicklist } from "@/lib/searchSelectLoaders";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { companyService } from "@/services/company.service";
@@ -236,17 +238,15 @@ function NewAssessmentPageContent() {
               <label className="block text-xs font-semibold text-slate-700">
                 Organization Directory
               </label>
-              <select
+              <AsyncSearchSelect
                 value={selectedCompanyId}
-                onChange={(e) => setSelectedCompanyId(e.target.value)}
-                className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-              >
-                {companies.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.name} ({c.domain}) — {c.activePlan || "Bronze"} Tier
-                  </option>
-                ))}
-              </select>
+                onChange={setSelectedCompanyId}
+                placeholder="Select organization"
+                loadOptions={loadOrganizationPicklist}
+                searchPlaceholder="Search organizations…"
+                allowCustom={false}
+                pageSize={8}
+              />
             </div>
           ) : (
             <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">

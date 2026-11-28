@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   X,
@@ -31,6 +31,13 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { Company, SubscriptionTier } from "@/types/company.types";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import {
+  loadCountryOptions,
+  loadIndustryOptions,
+  loadUserPicklist,
+} from "@/lib/searchSelectLoaders";
 import { User as UserType } from "@/types/auth.types";
 import { AssessmentSession } from "@/types/assessment.types";
 import { OrgAuditorItem } from "@/types/auditorMapping.types";
@@ -63,6 +70,8 @@ export default function OrganizationDetailDrawer({
   const [profileRefreshing, setProfileRefreshing] = useState(false);
 
   // Fetch fresh company profile (including clientUser from backend)
+  const loadAssessorOptions = useMemo(() => loadUserPicklist("Assessor"), []);
+
   const fetchFreshCompany = useCallback(async (id: string) => {
     setProfileRefreshing(true);
     try {
@@ -190,19 +199,23 @@ export default function OrganizationDetailDrawer({
     }
   }, [company?._id]);
 
-  // Load data when company or tab changes
   useEffect(() => {
-    if (company?._id) {
+    if (!company?._id) return;
+    if (activeTab === "people") {
       fetchAssignedAuditors();
+      if (showAssignForm) fetchAvailableAssessors();
+    }
+    if (activeTab === "assessments") {
       fetchCompanyAssessments();
     }
-  }, [company?._id, fetchAssignedAuditors, fetchCompanyAssessments]);
-
-  useEffect(() => {
-    if (activeTab === "people") {
-      fetchAvailableAssessors();
-    }
-  }, [activeTab, fetchAvailableAssessors]);
+  }, [
+    company?._id,
+    activeTab,
+    showAssignForm,
+    fetchAssignedAuditors,
+    fetchCompanyAssessments,
+    fetchAvailableAssessors,
+  ]);
 
   if (!company) return null;
 
@@ -740,7 +753,7 @@ export default function OrganizationDetailDrawer({
               <div>
                 <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                   <Users className="h-3.5 w-3.5 text-teal-600" />
-                  Assigned Auditors &amp; Assessors
+                  Assigned assessors
                 </h3>
                 <p className="text-[10.5px] text-slate-400 mt-0.5">
                   Certified assessors authorized to review this organization.
@@ -748,12 +761,13 @@ export default function OrganizationDetailDrawer({
               </div>
 
               {isAdmin ? (
-                !showAssignForm && (
+                !showAssignForm &&
+                company.status === "Active" && (
                   <button
                     onClick={() => setShowAssignForm(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 rounded-lg transition"
                   >
-                    <Plus className="h-3 w-3" /> Assign Auditor
+                    <Plus className="h-3 w-3" /> Assign assessor
                   </button>
                 )
               ) : (
@@ -767,14 +781,14 @@ export default function OrganizationDetailDrawer({
             <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5 text-xs text-slate-600">
               <div className="flex items-center gap-1.5 font-bold text-slate-800 text-[11px]">
                 <ShieldCheck className="h-3.5 w-3.5 text-teal-600 shrink-0" />
-                <span>Auditor Access &amp; Evaluation Privileges</span>
+                <span>Assessor access &amp; evaluation privileges</span>
               </div>
               <ul className="space-y-1 text-[10.5px] text-slate-500 leading-tight">
                 <li>
                   <strong className="text-slate-700">Owner (Full Edit Access):</strong> Initiates assessments, evaluates controls, and uploads evidence.
                 </li>
                 <li>
-                  <strong className="text-slate-700">Auditor (Review Access):</strong> Authorized co-auditor permitted to review working papers.
+                  <strong className="text-slate-700">Assessor (review access):</strong> Authorized assessor permitted to review working papers.
                 </li>
                 <li>
                   <strong className="text-slate-700">Submitted Assessments:</strong> Formally locked to Read-Only / View Only for all parties.
@@ -782,8 +796,15 @@ export default function OrganizationDetailDrawer({
               </ul>
             </div>
 
+            {company.status === "Suspended" && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900">
+                This organization is <strong>suspended</strong>. You cannot invite or assign new users until it is
+                activated again.
+              </div>
+            )}
+
             {/* Inline Assign Auditor Form (Admin Only) */}
-            {isAdmin && showAssignForm && (
+            {isAdmin && company.status === "Active" && showAssignForm && (
               <form
                 onSubmit={handleAssignAuditor}
                 className="bg-slate-50/90 border border-slate-200 p-3 rounded-xl space-y-2.5 animate-in fade-in"
@@ -805,21 +826,15 @@ export default function OrganizationDetailDrawer({
                   </div>
                 )}
 
-                <select
+                <AsyncSearchSelect
                   value={selectedAssessorId}
-                  onChange={(e) => setSelectedAssessorId(e.target.value)}
-                  required
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-teal-500 font-medium"
-                >
-                  <option value="">-- Choose Assessor --</option>
-                  {availableAssessors
-                    .filter((a) => !auditors.some((aud) => aud.auditor?._id === a._id))
-                    .map((a) => (
-                      <option key={a._id} value={a._id}>
-                        {a.name} ({a.email})
-                      </option>
-                    ))}
-                </select>
+                  onChange={setSelectedAssessorId}
+                  placeholder="Choose assessor"
+                  searchPlaceholder="Search assessors…"
+                  loadOptions={loadAssessorOptions}
+                  allowCustom={false}
+                  pageSize={8}
+                />
 
                 <div className="flex items-center justify-end gap-2 pt-1">
                   <button
@@ -858,7 +873,7 @@ export default function OrganizationDetailDrawer({
             ) : auditors.length === 0 ? (
               <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-1.5">
                 <Users className="h-6 w-6 text-slate-300 mx-auto" />
-                <p className="font-semibold text-slate-700 text-xs">No Auditors Assigned Yet</p>
+                <p className="font-semibold text-slate-700 text-xs">No assessors assigned yet</p>
                 <p className="text-[11px] text-slate-400">
                   Certified assessors mapped with privileges to audit this organization.
                 </p>
@@ -867,7 +882,7 @@ export default function OrganizationDetailDrawer({
                     onClick={() => setShowAssignForm(true)}
                     className="mt-2 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-100 text-teal-700 font-semibold text-[11px] rounded-lg transition"
                   >
-                    + Assign First Auditor
+                    Assign first assessor
                   </button>
                 )}
               </div>
@@ -909,7 +924,7 @@ export default function OrganizationDetailDrawer({
                                   isLeadOwner ? "bg-emerald-500" : "bg-blue-500"
                                 }`}
                               />
-                              {isLeadOwner ? "Owner (Full Edit Access)" : "Auditor (Review Access)"}
+                              {isLeadOwner ? "Owner (full edit access)" : "Assessor (review access)"}
                             </span>
 
                             {isSubmitted && (
@@ -1019,6 +1034,7 @@ export default function OrganizationDetailDrawer({
               required
               value={editForm.name}
               onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              placeholder={fieldPlaceholder.organizationName}
               className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
             />
           </div>
@@ -1032,27 +1048,25 @@ export default function OrganizationDetailDrawer({
             </div>
           </div>
 
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Industry</label>
-            <input
-              type="text"
-              value={editForm.industry}
-              onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
-              placeholder="e.g. Technology"
-              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-            />
-          </div>
+          <AsyncSearchSelect
+            label="Industry"
+            value={editForm.industry}
+            onChange={(industry) => setEditForm({ ...editForm, industry })}
+            placeholder={fieldPlaceholder.selectIndustry}
+            searchPlaceholder="Search industries…"
+            loadOptions={loadIndustryOptions}
+            pageSize={8}
+          />
 
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Country</label>
-            <input
-              type="text"
-              value={editForm.country}
-              onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-              placeholder="e.g. United States"
-              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-            />
-          </div>
+          <AsyncSearchSelect
+            label="Country"
+            value={editForm.country}
+            onChange={(country) => setEditForm({ ...editForm, country })}
+            placeholder={fieldPlaceholder.selectCountry}
+            searchPlaceholder="Search countries…"
+            loadOptions={loadCountryOptions}
+            pageSize={8}
+          />
 
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -1065,7 +1079,7 @@ export default function OrganizationDetailDrawer({
                 onChange={(e) =>
                   setEditForm({ ...editForm, registrationNumber: e.target.value })
                 }
-                placeholder="e.g. REG-12345"
+                placeholder={fieldPlaceholder.registrationId}
                 className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
               />
             </div>

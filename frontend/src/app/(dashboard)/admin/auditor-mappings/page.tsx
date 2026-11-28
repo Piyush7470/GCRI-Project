@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { TableBodySkeletonRows } from "@/components/shared/PageSkeletons";
 import {
@@ -27,14 +27,19 @@ import {
   Activity,
 } from "lucide-react";
 import { auditorMappingService } from "@/services/auditorMapping.service";
-import { userService } from "@/services/user.service";
-import { companyService } from "@/services/company.service";
 import { AuditorOrganizationMapping } from "@/types/auditorMapping.types";
 import { User as UserType } from "@/types/auth.types";
 import { Company } from "@/types/company.types";
 import { useAuth } from "@/context/AuthContext";
-import { MetricListModal, MetricListRow } from "@/components/shared/MetricListModal";
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { loadOrganizationPicklist, loadUserPicklist } from "@/lib/searchSelectLoaders";
+import {
+  allAssessorsFilterOption,
+  allOrganizationsFilterOption,
+  auditorMappingStatusOptions,
+} from "@/lib/searchSelectOptions";
+import { MappingFilterSearch } from "@/components/features/auditorMappings/MappingFilterSearch";
 
 export default function AuditorMappingsPage() {
   const router = useRouter();
@@ -42,8 +47,6 @@ export default function AuditorMappingsPage() {
   const canManageMappings = isOrgAdmin && !isSuperAdmin;
   // Live State
   const [mappings, setMappings] = useState<AuditorOrganizationMapping[]>([]);
-  const [assessors, setAssessors] = useState<UserType[]>([]);
-  const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -66,6 +69,31 @@ export default function AuditorMappingsPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const loadAssessorPicklist = useCallback(
+    async (params: { search: string; page: number; limit: number }) => {
+      const res = await loadUserPicklist("Assessor")(params);
+      if (params.page === 1 && !params.search.trim()) {
+        return { items: [allAssessorsFilterOption, ...res.items], hasMore: res.hasMore };
+      }
+      return res;
+    },
+    []
+  );
+
+  const loadOrgPicklistWithAll = useCallback(
+    async (params: { search: string; page: number; limit: number }) => {
+      const res = await loadOrganizationPicklist(params);
+      if (params.page === 1 && !params.search.trim()) {
+        return { items: [allOrganizationsFilterOption, ...res.items], hasMore: res.hasMore };
+      }
+      return res;
+    },
+    []
+  );
+
+  const loadAssessorPicklistRequired = useMemo(() => loadUserPicklist("Assessor"), []);
+  const loadOrgPicklistRequired = useMemo(() => loadOrganizationPicklist, []);
+
   const [createForm, setCreateForm] = useState({
     auditorId: "",
     organizationId: "",
@@ -76,7 +104,27 @@ export default function AuditorMappingsPage() {
   const [mappingToUnassign, setMappingToUnassign] = useState<AuditorOrganizationMapping | null>(null);
   const [unassignLoading, setUnassignLoading] = useState(false);
 
-  const [metricModal, setMetricModal] = useState<"all" | "active" | "assessors" | "orgs" | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const scrollToList = () => {
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const applyMetricTile = (preset: "all" | "active" | "assessors" | "orgs") => {
+    setPage(1);
+    setSearch("");
+    setSelectedOrgFilter("all");
+    setSelectedAuditorFilter("all");
+    switch (preset) {
+      case "active":
+        setStatusFilter("Active");
+        break;
+      default:
+        setStatusFilter("All");
+        break;
+    }
+    scrollToList();
+  };
 
   // Fetch all mappings from Live Backend
   const fetchMappings = useCallback(async () => {
@@ -99,33 +147,11 @@ export default function AuditorMappingsPage() {
       }
     } catch (err: any) {
       console.error("Failed to load auditor mappings:", err);
-      setError(err?.message || "Failed to load auditor assignments from server.");
+      setError(err?.message || "Failed to load assessor assignments from server.");
     } finally {
       setLoading(false);
     }
   }, [page, limit, statusFilter, selectedOrgFilter, selectedAuditorFilter]);
-
-  // Load Dropdown Options (Assessors & Organizations)
-  const fetchDropdownOptions = useCallback(async () => {
-    try {
-      const [auditorsRes, assessorsRes, orgsRes] = await Promise.all([
-        userService.getUsers({ limit: 100, role: "Auditor" }),
-        userService.getUsers({ limit: 100, role: "Assessor" }),
-        companyService.getCompanies({ limit: 100 }),
-      ]);
-
-      const byId = new Map<string, UserType>();
-      for (const u of [...(auditorsRes?.data || []), ...(assessorsRes?.data || [])]) {
-        byId.set(u._id, u);
-      }
-      setAssessors(Array.from(byId.values()));
-      if (orgsRes?.data) {
-        setCompanies(orgsRes.data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch dropdown options:", err);
-    }
-  }, []);
 
   useEffect(() => {
     if (authLoading) return;
@@ -133,11 +159,6 @@ export default function AuditorMappingsPage() {
       router.replace("/dashboard");
     }
   }, [authLoading, isSuperAdmin, isOrgAdmin, router]);
-
-  useEffect(() => {
-    if (!canManageMappings) return;
-    fetchDropdownOptions();
-  }, [canManageMappings, fetchDropdownOptions]);
 
   useEffect(() => {
     if (!canManageMappings) return;
@@ -186,81 +207,6 @@ export default function AuditorMappingsPage() {
     return set.size;
   }, [mappings]);
 
-  const mappingToRow = (m: AuditorOrganizationMapping): MetricListRow => {
-    const auditor = typeof m.auditorId === "object" ? m.auditorId : null;
-    const org = typeof m.organizationId === "object" ? m.organizationId : null;
-    return {
-      id: m._id,
-      title: auditor?.name || "Assessor",
-      subtitle: org?.name || "Organization",
-      meta: auditor?.email || org?.domain,
-      badge: m.status,
-      badgeTone: m.status === "Active" ? "success" : "warning",
-      imageUrl: auditor?.avatar?.url || org?.logo?.url,
-      imageName: auditor?.name || org?.name,
-      imageVariant: auditor ? "avatar" : "logo",
-    };
-  };
-
-  const uniqueAssessorRows = useMemo((): MetricListRow[] => {
-    const map = new Map<string, MetricListRow>();
-    mappings.forEach((m) => {
-      const auditor = typeof m.auditorId === "object" ? m.auditorId : null;
-      const id = auditor?._id || (typeof m.auditorId === "string" ? m.auditorId : "");
-      if (!id || map.has(id)) return;
-      map.set(id, {
-        id,
-        title: auditor?.name || "Assessor",
-        subtitle: auditor?.email,
-        badge: "Assessor",
-        badgeTone: "info",
-        imageUrl: auditor?.avatar?.url,
-        imageName: auditor?.name || auditor?.email,
-        imageVariant: "avatar",
-      });
-    });
-    return Array.from(map.values());
-  }, [mappings]);
-
-  const uniqueOrgRows = useMemo((): MetricListRow[] => {
-    const map = new Map<string, MetricListRow>();
-    mappings.forEach((m) => {
-      const org = typeof m.organizationId === "object" ? m.organizationId : null;
-      const id = org?._id || (typeof m.organizationId === "string" ? m.organizationId : "");
-      if (!id || map.has(id)) return;
-      map.set(id, {
-        id,
-        title: org?.name || "Organization",
-        subtitle: org?.domain,
-        badge: org?.status,
-        badgeTone: org?.status === "Active" ? "success" : "neutral",
-        imageUrl: org?.logo?.url,
-        imageName: org?.name,
-        imageVariant: "logo",
-        href: `/organizations/${id}`,
-      });
-    });
-    return Array.from(map.values());
-  }, [mappings]);
-
-  const metricModalRows =
-    metricModal === "active"
-      ? mappings.filter((m) => m.status === "Active").map(mappingToRow)
-      : metricModal === "assessors"
-        ? uniqueAssessorRows
-        : metricModal === "orgs"
-          ? uniqueOrgRows
-          : mappings.map(mappingToRow);
-
-  const metricModalTitle =
-    metricModal === "active"
-      ? "Active Scopes"
-      : metricModal === "assessors"
-        ? "Mapped Assessors"
-        : metricModal === "orgs"
-          ? "Client Organizations"
-          : "Total Mappings";
-
   if (authLoading || !canManageMappings) {
     return (
       <div className="max-w-2xl mx-auto my-12 surface-panel p-8 text-center space-y-4 shadow-xs">
@@ -269,7 +215,7 @@ export default function AuditorMappingsPage() {
         </div>
         <h2 className="text-lg font-bold text-slate-900">Tenant Admin Authorization Required</h2>
         <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
-          Auditor mapping is managed by Tenant Admins for organizations in their workspace.
+          Assessor mappings are managed by Tenant Admins for client organizations in their workspace.
         </p>
       </div>
     );
@@ -317,7 +263,7 @@ export default function AuditorMappingsPage() {
 
     try {
       await auditorMappingService.deleteMapping(mappingToUnassign._id);
-      setActionSuccess("Auditor scope assignment successfully unassigned/deactivated.");
+      setActionSuccess("Assessor assignment successfully unassigned.");
       setTimeout(() => setActionSuccess(null), 4000);
       setUnassignModalOpen(false);
       setMappingToUnassign(null);
@@ -337,7 +283,7 @@ export default function AuditorMappingsPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="page-title page-title-lg">
-              Auditor Mappings &amp; Engagements
+              Assessor mappings &amp; engagements
             </h1>
             <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200">
               Many-to-Many Hub
@@ -403,66 +349,44 @@ export default function AuditorMappingsPage() {
           icon={Layers}
           value={totalCount}
           label="Total Mappings"
-          subtext="Database Registry · Click to list"
-          onClick={() => setMetricModal("all")}
+          subtext="All mappings · scroll to list"
+          onClick={() => applyMetricTile("all")}
         />
         <SummaryMetricTile
           tone="emerald"
           icon={Activity}
           value={activeCount}
           label="Active Scopes"
-          subtext="● Ready for Audit · Click to list"
-          onClick={() => setMetricModal("active")}
+          subtext="Filter: Active status"
+          onClick={() => applyMetricTile("active")}
         />
         <SummaryMetricTile
           tone="teal"
           icon={UserCheck}
           value={uniqueAssessors}
           label="Mapped Assessors"
-          subtext="Active Certified · Click to list"
-          onClick={() => setMetricModal("assessors")}
+          subtext="Unique assessors on page"
+          onClick={() => applyMetricTile("assessors")}
         />
         <SummaryMetricTile
           tone="blue"
           icon={Building2}
           value={uniqueOrgs}
           label="Client Organizations"
-          subtext="Covered Portfolios · Click to list"
-          onClick={() => setMetricModal("orgs")}
+          subtext="Unique orgs on page"
+          onClick={() => applyMetricTile("orgs")}
         />
       </div>
-
-      <MetricListModal
-        open={metricModal !== null}
-        onClose={() => setMetricModal(null)}
-        title={metricModalTitle}
-        description="Directory for this summary metric"
-        emptyMessage="No items match this metric."
-        rows={metricModalRows}
-      />
 
       {/* Filter & Action Toolbar */}
       <div className="bg-white rounded-xl border border-slate-200/90 p-2.5 shadow-2xs flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 shrink-0">
         <div className="flex items-center gap-2 flex-1 flex-wrap">
           {/* Search Box */}
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter by assessor or organization..."
-              className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+          <MappingFilterSearch
+            className="flex-1 min-w-[200px] max-w-xs"
+            value={search}
+            onChange={setSearch}
+          />
 
           {/* Filters */}
           <div className="flex items-center gap-1.5 flex-wrap text-xs">
@@ -471,53 +395,47 @@ export default function AuditorMappingsPage() {
               <span>Filters:</span>
             </div>
 
-            {/* Status Filter */}
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[8rem]"
               value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
+              onChange={(v) => {
+                setStatusFilter(v);
                 setPage(1);
               }}
-              className="py-1 px-2.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none focus:border-teal-500 transition"
-            >
-              <option value="All">All Statuses</option>
-              <option value="Active">Active Only</option>
-              <option value="Inactive">Inactive Only</option>
-            </select>
+              staticOptions={auditorMappingStatusOptions}
+              searchPlaceholder="Search status…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
-            {/* Assessor Filter */}
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[9rem] max-w-[11rem]"
               value={selectedAuditorFilter}
-              onChange={(e) => {
-                setSelectedAuditorFilter(e.target.value);
+              onChange={(v) => {
+                setSelectedAuditorFilter(v);
                 setPage(1);
               }}
-              className="py-1 px-2.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none focus:border-teal-500 transition max-w-[160px] truncate"
-            >
-              <option value="all">All Assessors</option>
-              {assessors.map((a) => (
-                <option key={a._id} value={a._id}>
-                  {a.name} ({a.email})
-                </option>
-              ))}
-            </select>
+              loadOptions={loadAssessorPicklist}
+              searchPlaceholder="Search assessors…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
-            {/* Organization Filter */}
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[9rem] max-w-[11rem]"
               value={selectedOrgFilter}
-              onChange={(e) => {
-                setSelectedOrgFilter(e.target.value);
+              onChange={(v) => {
+                setSelectedOrgFilter(v);
                 setPage(1);
               }}
-              className="py-1 px-2.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none focus:border-teal-500 transition max-w-[160px] truncate"
-            >
-              <option value="all">All Organizations</option>
-              {companies.map((c) => (
-                <option key={c._id} value={c._id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              loadOptions={loadOrgPicklistWithAll}
+              searchPlaceholder="Search organizations…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
             {(statusFilter !== "All" || selectedOrgFilter !== "all" || selectedAuditorFilter !== "all" || search) && (
               <button
@@ -543,7 +461,10 @@ export default function AuditorMappingsPage() {
       </div>
 
       {/* Main Data Table Card */}
-      <div className="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/90 shadow-2xs flex flex-col overflow-hidden">
+      <div
+        ref={listRef}
+        className="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/90 shadow-2xs flex flex-col overflow-hidden scroll-mt-4"
+      >
         <div className="flex-1 overflow-auto">
           <table className="w-full text-left border-collapse text-xs">
             {/* Sticky Table Header */}
@@ -569,7 +490,7 @@ export default function AuditorMappingsPage() {
                       <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
                         <UserCheck className="h-5 w-5" />
                       </div>
-                      <p className="font-medium text-slate-600 text-sm">No auditor assignments found</p>
+                      <p className="font-medium text-slate-600 text-sm">No assessor assignments found</p>
                       <p className="text-xs text-slate-400 max-w-sm text-center">
                         {search || statusFilter !== "All" || selectedOrgFilter !== "all" || selectedAuditorFilter !== "all"
                           ? "Try adjusting your search queries or filter selections."
@@ -778,22 +699,17 @@ export default function AuditorMappingsPage() {
 
               {/* Select Certified Assessor */}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Select Certified Assessor <span className="text-rose-500">*</span>
-                </label>
-                <select
+                <AsyncSearchSelect
+                  label="Select certified assessor *"
                   value={createForm.auditorId}
-                  onChange={(e) => setCreateForm({ ...createForm, auditorId: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 text-xs transition"
-                >
-                  <option value="">-- Choose an Assessor --</option>
-                  {assessors.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {a.name} — {a.email} {a.status === "Active" ? "(Active)" : "(Inactive)"}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(auditorId) => setCreateForm({ ...createForm, auditorId })}
+                  placeholder="Choose an assessor"
+                  emptyValue=""
+                  loadOptions={loadAssessorPicklistRequired}
+                  searchPlaceholder="Search assessors…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
                 <p className="text-[10.5px] text-slate-400 mt-1">
                   Only users with the certified <code>Assessor</code> role are listed.
                 </p>
@@ -801,22 +717,19 @@ export default function AuditorMappingsPage() {
 
               {/* Select Client Organization */}
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
-                  Select Client Organization <span className="text-rose-500">*</span>
-                </label>
-                <select
+                <AsyncSearchSelect
+                  label="Select client organization *"
                   value={createForm.organizationId}
-                  onChange={(e) => setCreateForm({ ...createForm, organizationId: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 bg-slate-50 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 text-xs transition"
-                >
-                  <option value="">-- Choose a Client Organization --</option>
-                  {companies.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name} {c.domain ? `(${c.domain})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(organizationId) =>
+                    setCreateForm({ ...createForm, organizationId })
+                  }
+                  placeholder="Choose a client organization"
+                  emptyValue=""
+                  loadOptions={loadOrgPicklistRequired}
+                  searchPlaceholder="Search organizations…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
                 <p className="text-[10.5px] text-slate-400 mt-1">
                   Organizations in your tenant workspace where the assessor can perform audit verifications.
                 </p>

@@ -28,7 +28,7 @@ function kpiRows(data: DashboardAnalyticsPayload): Array<[string, string | numbe
   const k = data.kpis;
   return [
     ["Total users", k.totalUsers.value],
-    ["Auditors / assessors", k.totalAuditors.value],
+    ["Accredited assessors", k.totalAuditors.value],
     ["Organizations", k.totalOrganizations.value],
     ["Assessments", k.totalAssessments.value],
     ["Compliance score", `${k.complianceScore.value}%`],
@@ -97,7 +97,7 @@ export class DashboardAnalyticsExportService {
     ];
     const labels: Record<string, string> = {
       totalUsers: "Users",
-      totalAuditors: "Auditors",
+      totalAuditors: "Assessors",
       totalOrganizations: "Organizations",
       totalAssessments: "Assessments",
       complianceScore: "Compliance",

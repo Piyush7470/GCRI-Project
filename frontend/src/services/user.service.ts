@@ -98,8 +98,10 @@ export const userService = {
     email: string;
     password: string;
     role: string;
+    companyId?: string;
+    tenantId?: string;
   }) =>
-    apiClient.post("/auth/register", payload),
+    apiClient.post("/users/direct", payload),
 
   updateUserStatus: (id: string, status: UserStatus) =>
     apiClient.patch<{ message: string; user: { id: string; email: string; status: UserStatus } }>(

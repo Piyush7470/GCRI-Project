@@ -8,6 +8,9 @@ import { useTenant } from "@/context/TenantContext";
 import { tenantService } from "@/services/tenant.service";
 import type { TenantRecord, TenantStatus } from "@/types/tenant.types";
 import { getApiErrorMessage } from "@/lib/authUser";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { loadTenantStatusOptions } from "@/lib/searchSelectLoaders";
 import { ArrowLeft, Layers, RefreshCw, UserPlus } from "lucide-react";
 
 export default function TenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -151,7 +154,7 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
         {[
           ["Organizations", tenant.metadata?.clientOrgCount ?? 0],
           ["Assessments", tenant.metadata?.assessmentCount ?? 0],
-          ["Auditors", tenant.metadata?.auditorCount ?? 0],
+          ["Assessors", tenant.metadata?.auditorCount ?? 0],
         ].map(([label, val]) => (
           <div key={String(label)} className="rounded-xl border bg-white p-4 shadow-xs">
             <p className="text-[10px] uppercase font-bold text-slate-500">{label}</p>
@@ -168,16 +171,16 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
         </p>
         {isSuperAdmin && (
           <div className="flex flex-wrap gap-2 items-end">
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[9rem]"
               value={status}
-              onChange={(e) => setStatus(e.target.value as TenantStatus)}
-              className="text-sm border rounded-lg px-2 py-1.5"
-            >
-              <option value="Pending">Pending</option>
-              <option value="Active">Active</option>
-              <option value="Suspended">Suspended</option>
-              <option value="Retired">Retired</option>
-            </select>
+              onChange={(v) => setStatus(v as TenantStatus)}
+              loadOptions={loadTenantStatusOptions}
+              searchPlaceholder="Search status…"
+              allowCustom={false}
+              pageSize={8}
+            />
             <input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -218,7 +221,7 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
               type="email"
               value={adminForm.email}
               onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })}
-              placeholder="Email"
+              placeholder={fieldPlaceholder.email}
               className="text-sm border rounded-lg px-3 py-2"
             />
           </div>

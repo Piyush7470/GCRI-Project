@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { tenantService } from "@/services/tenant.service";
 import type { TenantMembershipItem, TenantRecord } from "@/types/tenant.types";
@@ -24,6 +25,7 @@ interface TenantContextValue {
 const TenantContext = createContext<TenantContextValue | undefined>(undefined);
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const { user, isSuperAdmin, isTenantAdmin, loading: authLoading } = useAuth();
   const [memberships, setMemberships] = useState<TenantMembershipItem[]>([]);
   const [activeTenantId, setActiveTenantIdState] = useState<string | null>(null);
@@ -79,14 +81,30 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, isSuperAdmin, setActiveTenantId]);
 
+  const shouldEagerLoadTenants = useMemo(() => {
+    if (!user) return false;
+    if (!isSuperAdmin) return true;
+    if (pathname === "/dashboard") {
+      const stored =
+        typeof window !== "undefined" ? localStorage.getItem(ACTIVE_TENANT_KEY) : null;
+      return Boolean(stored);
+    }
+    return true;
+  }, [user, isSuperAdmin, pathname]);
+
   useEffect(() => {
     if (authLoading) return;
-    if (user) refreshTenants();
-    else {
+    if (!user) {
       setMemberships([]);
       setActiveTenantId(null);
+      return;
     }
-  }, [user, authLoading, refreshTenants, setActiveTenantId]);
+    if (!shouldEagerLoadTenants) {
+      setLoading(false);
+      return;
+    }
+    void refreshTenants();
+  }, [user, authLoading, shouldEagerLoadTenants, refreshTenants, setActiveTenantId]);
 
   const activeMembership = useMemo(
     () => memberships.find((m) => m.tenant._id === activeTenantId) ?? null,

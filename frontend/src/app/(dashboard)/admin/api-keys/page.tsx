@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { apiKeyService, ApiKeyItem } from "@/services/apiKey.service";
@@ -25,8 +25,9 @@ import {
   CheckCircle2,
   X,
 } from "lucide-react";
-import { MetricListModal, MetricListRow } from "@/components/shared/MetricListModal";
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import { loadOrganizationPicklist } from "@/lib/searchSelectLoaders";
 
 export default function ApiKeysPage() {
   const router = useRouter();
@@ -56,7 +57,17 @@ export default function ApiKeysPage() {
 
   // Revoke Key State
   const [revokingId, setRevokingId] = useState<string | null>(null);
-  const [metricModal, setMetricModal] = useState<"all" | "active" | "revoked" | null>(null);
+  const [keyStatusFilter, setKeyStatusFilter] = useState<"all" | "active" | "revoked">("all");
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const scrollToList = () => {
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const applyMetricTile = (preset: "all" | "active" | "revoked") => {
+    setKeyStatusFilter(preset);
+    scrollToList();
+  };
 
   const loadData = async () => {
     try {
@@ -171,36 +182,13 @@ export default function ApiKeysPage() {
   const activeKeysCount = keys.filter((k) => k.isActive).length;
   const revokedKeysCount = keys.filter((k) => !k.isActive).length;
 
-  const toKeyRow = (k: ApiKeyItem): MetricListRow => ({
-    id: k._id,
-    title: k.name || k.prefix || "API Key",
-    subtitle: k.prefix ? `Prefix ${k.prefix}` : undefined,
-    meta: k.companyId
-      ? typeof k.companyId === "object"
-        ? (k.companyId as any).name
-        : String(k.companyId)
-      : k.role,
-    badge: k.isActive ? "Active" : "Revoked",
-    badgeTone: k.isActive ? "success" : "warning",
-    imageVariant: "logo",
-    imageName: k.name,
-  });
+  const filteredKeys = useMemo(() => {
+    if (keyStatusFilter === "active") return keys.filter((k) => k.isActive);
+    if (keyStatusFilter === "revoked") return keys.filter((k) => !k.isActive);
+    return keys;
+  }, [keys, keyStatusFilter]);
 
-  const metricModalRows =
-    metricModal === "active"
-      ? keys.filter((k) => k.isActive).map(toKeyRow)
-      : metricModal === "revoked"
-        ? keys.filter((k) => !k.isActive).map(toKeyRow)
-        : keys.map(toKeyRow);
-
-  const metricModalTitle =
-    metricModal === "active"
-      ? "Active Live Credentials"
-      : metricModal === "revoked"
-        ? "Revoked / Inactive Keys"
-        : "All Provisioned Keys";
-
-  const keysPagination = useClientPagination(keys);
+  const keysPagination = useClientPagination(filteredKeys);
 
   if (loading && keys.length === 0 && !error) {
     return <ApiKeysPageSkeleton />;
@@ -266,38 +254,47 @@ export default function ApiKeysPage() {
           icon={Key}
           value={keys.length}
           label="Total Provisioned Keys"
-          subtext="Click to list"
-          onClick={() => setMetricModal("all")}
+          subtext="Show all keys below"
+          onClick={() => applyMetricTile("all")}
         />
         <SummaryMetricTile
           tone="emerald"
           icon={CheckCircle2}
           value={activeKeysCount}
           label="Active Live Credentials"
-          subtext="Click to list"
-          onClick={() => setMetricModal("active")}
+          subtext="Filter: Active keys"
+          onClick={() => applyMetricTile("active")}
         />
         <SummaryMetricTile
           tone="slate"
           icon={EyeOff}
           value={revokedKeysCount}
           label="Revoked / Inactive Keys"
-          subtext="Click to list"
-          onClick={() => setMetricModal("revoked")}
+          subtext="Filter: Revoked keys"
+          onClick={() => applyMetricTile("revoked")}
         />
       </div>
 
-      <MetricListModal
-        open={metricModal !== null}
-        onClose={() => setMetricModal(null)}
-        title={metricModalTitle}
-        description="API credentials matching this summary metric"
-        emptyMessage="No API keys match this metric."
-        rows={metricModalRows}
-      />
+      {keyStatusFilter !== "all" && (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-2 text-xs text-indigo-900">
+          <span>
+            <span className="font-bold">Tile filter:</span>{" "}
+            {keyStatusFilter === "active" ? "Active credentials only" : "Revoked credentials only"}
+            <span className="ml-2 tabular-nums">({filteredKeys.length} keys)</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setKeyStatusFilter("all")}
+            className="inline-flex items-center gap-1 font-semibold text-indigo-700 hover:text-indigo-900"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Keys Directory Table */}
-      <div className="surface-panel overflow-hidden shadow-xs">
+      <div ref={listRef} className="surface-panel overflow-hidden shadow-xs scroll-mt-4">
         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900">Provisioned API Credentials</h2>
@@ -483,20 +480,17 @@ export default function ApiKeysPage() {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Target Client Organization *
                 </label>
-                <select
-                  required
+                <AsyncSearchSelect
                   value={createCompanyId}
-                  onChange={(e) => setCreateCompanyId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-                >
-                  {companies.map((c) => (
-                    <option key={c._id} value={c._id}>
-                      {c.name} ({c.domain})
-                    </option>
-                  ))}
-                </select>
+                  onChange={setCreateCompanyId}
+                  loadOptions={loadOrganizationPicklist}
+                  placeholder="Select client organization…"
+                  searchPlaceholder="Search organizations…"
+                  allowCustom={false}
+                  pageSize={8}
+                />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  This key will be scoped strictly to this client tenant organization.
+                  This key is scoped to the selected client organization.
                 </p>
               </div>
 
@@ -511,7 +505,7 @@ export default function ApiKeysPage() {
                     className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
                   >
                     <option value="ReadOnly">ReadOnly</option>
-                    <option value="Auditor">Auditor</option>
+                    <option value="Assessor">Assessor</option>
                     <option value="Admin">Admin</option>
                   </select>
                 </div>

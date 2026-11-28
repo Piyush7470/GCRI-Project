@@ -34,6 +34,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const hasCachedProfile = Boolean(storage.getUser());
+    if (!hasCachedProfile) {
+      setLoading(true);
+    }
+
     try {
       const res = await userService.getCurrentUser();
       const normalized = normalizeLoginUser(
@@ -70,13 +75,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    refreshUser();
+    const token = storage.getToken();
+    const cached = storage.getUser<Record<string, unknown>>();
+    if (token && cached) {
+      const hydrated = normalizeLoginUser(cached);
+      if (hydrated) {
+        setUser(hydrated);
+        setLoading(false);
+      }
+    }
+    void refreshUser();
   }, [refreshUser]);
 
   const login = (token: string, newUser: User) => {
     storage.setToken(token);
     storage.setUser(newUser);
     setUser(newUser);
+    setLoading(false);
   };
 
   const logout = () => {

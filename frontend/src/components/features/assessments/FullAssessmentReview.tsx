@@ -292,7 +292,7 @@ export function FullAssessmentReview({ assessmentId }: FullAssessmentReviewProps
         <InfoCard title="Assessment type" value="Full" />
         <InfoCard title="Framework version" value={session.frameworkVersion} />
         <InfoCard
-          title="Auditor"
+          title="Assessor"
           value={
             <>
               <span className="flex items-center gap-1.5">

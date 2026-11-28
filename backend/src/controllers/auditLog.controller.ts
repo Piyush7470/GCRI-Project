@@ -124,9 +124,14 @@ export async function getAuditLogStats(
     ] = await Promise.all([
       AuditLog.countDocuments(baseFilter),
       AuditLog.countDocuments({ ...baseFilter, timestamp: { $gte: oneDayAgo } }),
-      AuditLog.countDocuments({ ...baseFilter, action: "AUTHORIZATION_DENIED" }),
+      AuditLog.countDocuments({
+        ...baseFilter,
+        action: "AUTHORIZATION_DENIED",
+        timestamp: { $gte: oneDayAgo },
+      }),
       AuditLog.aggregate([
         ...(Object.keys(baseFilter).length ? [{ $match: baseFilter }] : []),
+        { $match: { timestamp: { $gte: oneDayAgo } } },
         { $group: { _id: "$action", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },

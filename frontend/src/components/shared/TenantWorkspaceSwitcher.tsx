@@ -1,6 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo } from "react";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import type { SearchSelectOption } from "@/components/ui/AsyncSearchSelect";
 import { Layers } from "lucide-react";
 import { useTenant } from "@/context/TenantContext";
 import { useAuth } from "@/context/AuthContext";
@@ -14,7 +16,23 @@ export function TenantWorkspaceSwitcher() {
     loading,
     showTenantSwitcher,
     platformMode,
+    refreshTenants,
   } = useTenant();
+
+  useEffect(() => {
+    if (!showTenantSwitcher || loading) return;
+    if (memberships.length === 0) {
+      void refreshTenants();
+    }
+  }, [showTenantSwitcher, memberships.length, loading, refreshTenants]);
+
+  const tenantOptions: SearchSelectOption[] = useMemo(
+    () => [
+      ...(isSuperAdmin ? [{ value: "", label: "Platform" }] : []),
+      ...memberships.map((m) => ({ value: m.tenant._id, label: m.tenant.name })),
+    ],
+    [isSuperAdmin, memberships]
+  );
 
   if (!showTenantSwitcher) return null;
 
@@ -24,20 +42,18 @@ export function TenantWorkspaceSwitcher() {
       title="Active tenant workspace"
     >
       <Layers className="h-4 w-4 text-teal-600 shrink-0" aria-hidden />
-      <select
+      <AsyncSearchSelect
+        compact
+        className="min-w-0 w-full"
         value={activeTenantId ?? ""}
-        onChange={(e) => setActiveTenantId(e.target.value || null)}
+        onChange={(v) => setActiveTenantId(v || null)}
         disabled={loading}
-        className="min-w-0 w-full text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 pl-2 pr-7 truncate focus:outline-none focus:ring-2 focus:ring-teal-500/30"
-        aria-label="Active tenant workspace"
-      >
-        {isSuperAdmin && <option value="">Platform</option>}
-        {memberships.map((m) => (
-          <option key={m.tenant._id} value={m.tenant._id}>
-            {m.tenant.name}
-          </option>
-        ))}
-      </select>
+        staticOptions={tenantOptions}
+        searchPlaceholder="Search workspaces…"
+        allowCustom={false}
+        emptyValue=""
+        pageSize={8}
+      />
       {platformMode && isSuperAdmin && (
         <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/50 px-1.5 py-0.5 rounded border border-teal-200 dark:border-teal-800 shrink-0">
           Global

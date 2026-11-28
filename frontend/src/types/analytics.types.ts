@@ -153,5 +153,6 @@ export interface DashboardAnalytics {
     detail: string;
     severity: "critical" | "high" | "medium";
     value?: number;
+    entityId?: string;
   }>;
 }

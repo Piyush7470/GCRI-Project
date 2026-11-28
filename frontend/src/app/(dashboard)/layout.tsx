@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -14,7 +14,6 @@ import {
   Users,
   CreditCard,
   Settings,
-  Bell,
   Search,
   ChevronRight,
   ChevronDown,
@@ -31,7 +30,9 @@ import {
   X,
   RefreshCw,
   Check,
+  Loader2,
 } from "lucide-react";
+import { dashboardService } from "@/services/dashboard.service";
 import {
   DashboardScopeProvider,
   useDashboardScope,
@@ -42,6 +43,7 @@ import { DashboardShellContentSkeleton } from "@/components/shared/PageSkeletons
 import { BrandLogo } from "@/components/shared/BrandLogo";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
 import { EntityImage } from "@/components/shared/EntityImage";
+import { NotificationBell } from "@/components/shared/NotificationBell";
 import { useApiLoading } from "@/context/ApiLoadingContext";
 
 export default function DashboardLayout({
@@ -115,7 +117,7 @@ function DashboardLayoutContent({
         { label: "Organizations", href: "/organizations", icon: Building2 },
         { label: "Assessors / Team", href: "/admin/users", icon: Users },
         { label: "Assessments", href: "/assessments", icon: FileCheck2 },
-        { label: "Auditor Mappings", href: "/admin/auditor-mappings", icon: UserCheck },
+        { label: "Assessor mappings", href: "/admin/auditor-mappings", icon: UserCheck },
         { label: "API Keys", href: "/admin/api-keys", icon: Lock },
         { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
       ];
@@ -298,16 +300,10 @@ function DashboardLayoutContent({
             </div>
 
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-              <TenantWorkspaceSwitcher />
+              {pathname !== "/dashboard" && <TenantWorkspaceSwitcher />}
               <ThemeToggle />
 
-              <button
-                type="button"
-                className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition shrink-0"
-                aria-label="Notifications"
-              >
-                <Bell className="h-5 w-5" />
-              </button>
+              <NotificationBell isAdmin={isAdmin} />
 
               <button
                 type="button"
@@ -342,7 +338,7 @@ function DashboardLayoutContent({
                           ? "Tenant Admin"
                           : isOrgAdmin
                             ? "Org Admin"
-                            : "Auditor"}
+                            : "Assessor"}
                     </div>
                   </div>
                   <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 hidden sm:block" />
@@ -411,13 +407,92 @@ function DashboardLayoutContent({
 }
 
 function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" | "Auditor" }) {
-  const { selectedOrgFilter, setSelectedOrgFilter, organizations, triggerRefresh } =
-    useDashboardScope();
+  const {
+    selectedOrgFilter,
+    setSelectedOrgFilter,
+    organizations,
+    setOrganizations,
+    refreshTrigger,
+    triggerRefresh,
+  } = useDashboardScope();
   const { isLoading: apiBusy } = useApiLoading();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [listOrgs, setListOrgs] = useState(organizations);
+  const [searchLoading, setSearchLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setListOrgs(organizations);
+  }, [organizations]);
+
+  const fetchScopeOrgs = useCallback(
+    async (search: string) => {
+      if (activeRoleView === "Auditor") {
+        const q = search.trim().toLowerCase();
+        if (!q) {
+          setListOrgs(organizations);
+          return;
+        }
+        setListOrgs(
+          organizations.filter((org) => {
+            const name = (org.name || "").toLowerCase();
+            const domain = (org.domain || "").toLowerCase();
+            const industry = (org.industry || "").toLowerCase();
+            return name.includes(q) || domain.includes(q) || industry.includes(q);
+          })
+        );
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const res = await dashboardService.getAdminScopeOrganizations({
+          search: search.trim() || undefined,
+          limit: 200,
+        });
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        setListOrgs(
+          rows.map((c) => ({
+            _id: c._id,
+            name: c.name,
+            domain: c.domain,
+            industry: c.industry,
+            status: c.status,
+            activePlan: c.activePlan,
+            logoUrl: c.logoUrl ?? null,
+          }))
+        );
+        if (!search.trim()) {
+          setOrganizations(
+            rows.map((c) => ({
+              _id: c._id,
+              name: c.name,
+              domain: c.domain,
+              industry: c.industry,
+              status: c.status,
+              activePlan: c.activePlan,
+              logoUrl: c.logoUrl ?? null,
+            }))
+          );
+        }
+      } catch {
+        setListOrgs(organizations);
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [activeRoleView, organizations, setOrganizations]
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setTimeout(() => {
+      void fetchScopeOrgs(searchTerm);
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [isOpen, searchTerm, fetchScopeOrgs, refreshTrigger]);
 
   // Close on outside click
   useEffect(() => {
@@ -438,15 +513,7 @@ function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" |
   // Find currently selected organization
   const selectedOrg = organizations.find((o) => o._id === selectedOrgFilter);
 
-  // Filter organizations by search term (both name and domain/industry)
-  const filteredOrgs = organizations.filter((org) => {
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    const nameMatch = (org.name || "").toLowerCase().includes(q);
-    const domainMatch = (org.domain || "").toLowerCase().includes(q);
-    const industryMatch = (org.industry || "").toLowerCase().includes(q);
-    return nameMatch || domainMatch || industryMatch;
-  });
+  const filteredOrgs = listOrgs;
 
   return (
     <div ref={containerRef} className="relative flex items-center gap-1.5 sm:gap-2 min-w-0 max-w-full">
@@ -515,15 +582,19 @@ function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" |
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="Search organizations by name or domain..."
+                placeholder="Type to search organizations (name, domain)…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setIsOpen(false);
                 }}
-                className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full pl-8 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
               />
-              {searchTerm && (
+              {searchLoading ? (
+                <Loader2 className="absolute right-2 h-3.5 w-3.5 text-blue-600 animate-spin" />
+              ) : searchTerm ? (
                 <button
                   type="button"
                   onClick={() => setSearchTerm("")}
@@ -531,8 +602,9 @@ function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" |
                 >
                   <X className="h-3 w-3" />
                 </button>
-              )}
+              ) : null}
             </div>
+            <p className="text-[10px] text-slate-400 mt-1.5 px-0.5">Suggestions update as you type.</p>
           </div>
 
           {/* Organizations List */}

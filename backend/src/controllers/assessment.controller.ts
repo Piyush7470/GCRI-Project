@@ -1723,6 +1723,7 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
     const score = session.scoreSnapshot?.compliancePercentage ?? session.scoreSnapshot?.overallPercentage ?? 0;
     const maturityLevel = session.scoreSnapshot?.maturityLevel || "Emerging";
     const reportDownloadUrl = session.reportMetadata?.fileUrl;
+    const viewResultsUrl = `${emailService.getAppBaseUrl()}/assessments/${session._id}/results`;
 
     await emailService.sendAssessmentCompleted({
       recipientEmail,
@@ -1731,6 +1732,7 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
       score,
       maturityLevel,
       reportDownloadUrl,
+      viewResultsUrl,
     });
 
     await AuditLog.create({

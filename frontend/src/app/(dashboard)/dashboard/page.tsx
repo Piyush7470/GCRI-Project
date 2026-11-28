@@ -151,9 +151,12 @@ export default function DashboardPage() {
         const assessPromise = isSuperAdmin
           ? Promise.resolve({ data: { assessments: [] } })
           : dashboardService.getAdminAssessments({ limit: 100 });
-        const compPromise = isSuperAdmin
-          ? Promise.resolve({ data: [] })
-          : companyService.getCompanies({ limit: 100 });
+        const compPromise =
+          isSuperAdmin
+            ? selectedOrgFilter !== "all"
+              ? dashboardService.getAdminScopeOrganizations({ limit: 200 })
+              : Promise.resolve({ data: [] })
+            : companyService.getCompanies({ limit: 200 });
         const [sumResult, assessResult, compResult, analyticsResult] = await Promise.allSettled([
           dashboardService.getAdminSummary(),
           assessPromise,
@@ -192,33 +195,61 @@ export default function DashboardPage() {
           );
         }
 
+        const mapScopeOrg = (c: {
+          _id: string;
+          name: string;
+          domain?: string;
+          industry?: string;
+          status?: string;
+          activePlan?: string;
+          logoUrl?: string | null;
+          logo?: { url?: string };
+          subscription?: { plan?: string };
+        }) => ({
+          _id: c._id,
+          name: c.name,
+          domain: c.domain,
+          industry: c.industry,
+          status: c.status,
+          activePlan: c.activePlan || c.subscription?.plan || "Bronze",
+          logoUrl: c.logoUrl ?? c.logo?.url ?? null,
+        });
+
+        let scopeOrgs: ReturnType<typeof mapScopeOrg>[] = [];
+
         if (compResult.status === "fulfilled" && Array.isArray(compResult.value?.data)) {
-          setOrganizations(
-            compResult.value.data.map((c: any) => ({
-              _id: c._id,
-              name: c.name,
-              domain: c.domain,
-              industry: c.industry,
-              status: c.status,
-              activePlan: c.activePlan || c.subscription?.plan || "Bronze",
-              logoUrl: c.logo?.url || null,
-            }))
-          );
-        } else if (sumResult.value?.data?.recentOrganizations) {
-          setOrganizations(sumResult.value.data.recentOrganizations);
-          if (compResult.status === "rejected") {
-            partialErrors.push(
-              getUserFacingApiError(compResult.reason, "organization directory")
-            );
-          }
-        } else {
-          setOrganizations([]);
-          if (compResult.status === "rejected") {
-            partialErrors.push(
-              getUserFacingApiError(compResult.reason, "organization directory")
-            );
-          }
+          scopeOrgs = compResult.value.data.map((c: any) => mapScopeOrg(c));
+        } else if (compResult.status === "rejected") {
+          partialErrors.push(getUserFacingApiError(compResult.reason, "organization directory"));
         }
+
+        if (
+          scopeOrgs.length === 0 &&
+          analyticsResult.status === "fulfilled" &&
+          analyticsResult.value?.data?.organizationAccounts?.length
+        ) {
+          scopeOrgs = analyticsResult.value.data.organizationAccounts.map((a) =>
+            mapScopeOrg({
+              _id: a._id,
+              name: a.name,
+              activePlan: a.activePlan,
+              status: a.status,
+            })
+          );
+        }
+
+        if (scopeOrgs.length === 0 && sumResult.value?.data?.recentOrganizations?.length) {
+          scopeOrgs = sumResult.value.data.recentOrganizations.map((o) =>
+            mapScopeOrg({
+              _id: o._id,
+              name: o.name,
+              activePlan: o.activePlan,
+              status: o.status,
+            })
+          );
+        }
+
+        setOrganizations(scopeOrgs);
 
         if (analyticsResult.status === "fulfilled" && analyticsResult.value?.data) {
           setAnalytics(analyticsResult.value.data);
@@ -375,10 +406,6 @@ export default function DashboardPage() {
           void fetchAnalytics(analyticsRange);
         }}
         isAuditor={roleView === "Auditor"}
-        showScopeSelector={isSuperAdmin && roleView === "Admin"}
-        scopeOrganizations={scopeOrganizations.map((o) => ({ _id: o._id, name: o.name }))}
-        scopeValue={selectedOrgFilter}
-        onScopeChange={setSelectedOrgFilter}
         analyticsCompanyId={
           isSuperAdmin && selectedOrgFilter !== "all" ? selectedOrgFilter : undefined
         }
@@ -394,7 +421,7 @@ export default function DashboardPage() {
             ? "Workload trends, findings outliers, pillar completion, and assessment pipeline for your assigned tenants."
             : isSuperAdmin
               ? "Global multi-tenant KPIs, compliance trends, risk outliers, growth charts, and security telemetry."
-              : "Tenant KPIs, assessment trends, risk posture, auditor performance, and operational audit activity."
+              : "Tenant KPIs, assessment trends, risk posture, assessor performance, and operational audit activity."
         }
       />
 
@@ -928,10 +955,10 @@ function AuditorDashboardContent({
         open={metricModal === "orgs"}
         onClose={() => setMetricModal(null)}
         title="My Organizations"
-        description="Assigned client tenants in your assurance portfolio"
+        description="Assigned client organizations in your assurance portfolio"
         footerHref="/organizations"
         footerLabel="Open Organizations"
-        emptyMessage="No organizations assigned to your auditor account yet."
+        emptyMessage="No client organizations assigned to your assessor account yet."
         rows={organizations.map((org): MetricListRow => ({
           id: org._id,
           title: org.name,
@@ -1801,7 +1828,7 @@ function AuditorDashboardContent({
               </>
             ) : (
               <div className="py-8 text-center text-xs text-slate-400">
-                No organizations assigned to your auditor account yet.
+                No client organizations assigned to your assessor account yet.
               </div>
             )}
           </div>
@@ -2364,7 +2391,7 @@ function AdminDashboardContent({
           trend={
             isScoped
               ? `Scope: ${scopedOrg?.name || "tenant"} — user KPI remains API summary`
-              : `${summary?.stats?.totalAuditors ?? 0} Accredited Auditors`
+              : `${summary?.stats?.totalAuditors ?? 0} accredited assessors`
           }
           trendType="neutral"
           icon={Users}
@@ -2375,7 +2402,7 @@ function AdminDashboardContent({
 
         {/* Card 2: Auditors */}
         <StatCard
-          label={isSuperAdmin ? "Accredited Auditors" : "Organization Assessors"}
+          label={isSuperAdmin ? "Accredited assessors" : "Organization assessors"}
           value={summary?.stats?.totalAuditors ?? 0}
           trend={
             isScoped
@@ -2485,7 +2512,7 @@ function AdminDashboardContent({
       <MetricListModal
         open={metricModal === "users" || metricModal === "auditors"}
         onClose={() => setMetricModal(null)}
-        title={metricModal === "auditors" ? (isSuperAdmin ? "Accredited Auditors" : "Organization Assessors") : (isSuperAdmin ? "Platform Users" : "Organization Users")}
+        title={metricModal === "auditors" ? (isSuperAdmin ? "Accredited assessors" : "Organization assessors") : (isSuperAdmin ? "Platform Users" : "Organization Users")}
         description={userModalLoading ? "Loading directory…" : "Click a row to open user management"}
         footerHref="/admin/users"
         footerLabel="Open Users"

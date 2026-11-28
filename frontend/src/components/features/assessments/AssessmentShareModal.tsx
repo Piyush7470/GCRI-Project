@@ -49,8 +49,8 @@ export function AssessmentShareModal({
             : String(s.auditorId),
         name:
           typeof s.auditorId === "object" && s.auditorId
-            ? String((s.auditorId as { name?: string }).name ?? "Auditor")
-            : "Auditor",
+            ? String((s.auditorId as { name?: string }).name ?? "Assessor")
+            : "Assessor",
         email:
           typeof s.auditorId === "object" && s.auditorId
             ? String((s.auditorId as { email?: string }).email ?? "")

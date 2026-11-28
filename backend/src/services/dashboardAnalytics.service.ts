@@ -687,20 +687,25 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
     detail: string;
     severity: "critical" | "high" | "medium";
     value?: number;
+    entityId?: string;
   }> = [];
 
-  for (const [, row] of orgAgg.entries()) {
+  const orgOutliers: typeof outliers = [];
+  for (const [orgId, row] of orgAgg.entries()) {
     const complianceScore = row.scored > 0 ? Math.round(row.scoreSum / row.scored) : 0;
     if (row.assessments > 0 && complianceScore < 55) {
-      outliers.push({
+      orgOutliers.push({
         type: "organization",
         label: row.name,
-        detail: `Compliance maturity ${complianceScore}% across ${row.assessments} session(s)`,
+        detail: `${row.assessments} assessment session(s) · avg maturity ${complianceScore}%`,
         severity: complianceScore < 35 ? "critical" : "high",
         value: complianceScore,
+        entityId: orgId,
       });
     }
   }
+  orgOutliers.sort((a, b) => (a.value ?? 0) - (b.value ?? 0));
+  outliers.push(...orgOutliers.slice(0, 6));
 
   for (const a of auditorPerformance) {
     if (a.assigned >= 2 && a.completionRate < 50) {
@@ -710,6 +715,7 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
         detail: `Completion rate ${a.completionRate}% (${a.completed}/${a.assigned} assessments)`,
         severity: a.completionRate < 25 ? "critical" : "high",
         value: a.completionRate,
+        entityId: a.id,
       });
     }
   }
@@ -780,7 +786,7 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
       totalOrganizations: {
         value: totalOrganizations,
         deltaPct: orgsDelta,
-        hint: `${clientOrganizationSplit.clients} clients · ${clientOrganizationSplit.organizations} orgs · ${clientOrganizationSplit.uniqueTenants} tenants`,
+        hint: "Client organizations",
       },
       totalAssessments: {
         value: totalAssessments,

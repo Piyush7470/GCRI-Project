@@ -111,9 +111,17 @@ export async function createCompany(req: Request, res: Response, next: NextFunct
       },
     });
 
-    // Create client user account (Role: Assessor) linked to this company
+    // Create client user account (Role: Assessor) linked to this company — Super Admin only
     let createdUser = null;
     if (userData?.email) {
+      if (actorRole !== "SuperAdmin") {
+        return sendError(
+          res,
+          "Only Super Admin can create an Assessor login while onboarding an organization.",
+          403,
+          "ASSESSOR_ONBOARD_FORBIDDEN"
+        );
+      }
       const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12", 10);
       const passwordHash = userData.password
         ? await bcrypt.hash(userData.password, saltRounds)
@@ -231,10 +239,12 @@ export async function getCompanies(req: Request, res: Response, next: NextFuncti
     // Apply company scoping for non-Admins using '_id' as the document key
     const scopedFilter = scopeQueryByCompany(req, baseFilter, "_id");
 
-    // Search query for Admins
     if (req.query.search && typeof req.query.search === "string") {
-      const regex = new RegExp(req.query.search.trim(), "i");
-      scopedFilter.$or = [{ name: regex }, { domain: regex }];
+      const escaped = req.query.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (escaped) {
+        const regex = new RegExp(escaped, "i");
+        scopedFilter.$or = [{ name: regex }, { domain: regex }];
+      }
     }
 
     if (req.query.status && typeof req.query.status === "string") {
@@ -243,6 +253,14 @@ export async function getCompanies(req: Request, res: Response, next: NextFuncti
 
     if (req.query.verificationStatus && typeof req.query.verificationStatus === "string") {
       scopedFilter.verificationStatus = req.query.verificationStatus;
+    }
+
+    const activePlan =
+      (typeof req.query.activePlan === "string" && req.query.activePlan.trim()) ||
+      (typeof req.query.tier === "string" && req.query.tier.trim()) ||
+      "";
+    if (activePlan && activePlan !== "all") {
+      scopedFilter.activePlan = activePlan;
     }
 
     const [companies, total] = await Promise.all([

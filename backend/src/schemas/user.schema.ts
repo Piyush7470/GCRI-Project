@@ -5,7 +5,7 @@ const objectIdRegex = /^[0-9a-fA-F]{24}$/;
 export const UpdateProfileSchema = z.object({
   body: z.object({
     name: z.string().trim().min(2, "Name must be at least 2 characters").max(100).optional(),
-    phone: z.string().trim().max(30).optional(),
+    phone: z.string().trim().max(20).optional(),
   }),
 });
 
@@ -14,8 +14,8 @@ export const InviteUserSchema = z.object({
     email: z.string().trim().email("Invalid email address").toLowerCase(),
     name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
     // SuperAdmin is sole/platform-seeded — not inviteable
-    role: z.enum(["Admin", "TenantAdmin", "Assessor", "Auditor", "MembershipApprover"], {
-      message: "Role must be Admin, TenantAdmin, Assessor, Auditor, or MembershipApprover",
+    role: z.enum(["TenantAdmin", "Assessor", "Auditor"], {
+      message: "Role must be TenantAdmin or Assessor",
     }),
     companyId: z.string().regex(objectIdRegex, "Invalid Company ID format").optional(),
     tenantId: z.string().regex(objectIdRegex, "Invalid tenant ID format").optional(),
@@ -46,8 +46,8 @@ export const UpdateUserRoleSchema = z.object({
   }),
   body: z.object({
     // Cannot promote anyone to SuperAdmin — only one exists
-    role: z.enum(["Admin", "Assessor", "MembershipApprover"], {
-      message: "Role must be Admin, Assessor, or MembershipApprover",
+    role: z.enum(["TenantAdmin", "Assessor", "Auditor"], {
+      message: "Role must be TenantAdmin or Assessor",
     }),
   }),
 });

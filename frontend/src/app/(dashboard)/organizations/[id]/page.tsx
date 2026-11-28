@@ -48,6 +48,7 @@ import Modal, { ConfirmationVariant } from "@/components/ui/Modal";
 import { useAuth } from "@/context/AuthContext";
 import { EntityImage } from "@/components/shared/EntityImage";
 import { ImageUploader } from "@/components/shared/ImageUploader";
+import { PhoneInput } from "@/components/shared/PhoneInput";
 
 export default function OrganizationProfileFullPage({
   params,
@@ -347,8 +348,8 @@ export default function OrganizationProfileFullPage({
           </p>
           <p className="text-[11px] text-slate-400">
             {isSuspending
-              ? "Suspending this client organization will immediately restrict access to active assessment sessions and audit operations."
-              : "Activating this organization restores full access to assessment audits and compliance reporting."}
+              ? "Suspending blocks new user invites, direct adds, and new assessor assignments for this organization until you activate it again."
+              : "Activating restores operations and allows adding users to this organization again."}
           </p>
         </div>
       ),
@@ -511,7 +512,7 @@ export default function OrganizationProfileFullPage({
               : "border-transparent text-slate-500 hover:text-slate-900"
           }`}
         >
-          <span>People &amp; Assigned Auditors</span>
+          <span>People &amp; assigned assessors</span>
           <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-cyan-100 text-cyan-800 font-bold">
             {auditors.length}
           </span>
@@ -691,7 +692,7 @@ export default function OrganizationProfileFullPage({
                   onClick={() => setActiveTab("people")}
                   className="w-full py-2 bg-teal-50 hover:bg-teal-100 text-teal-700 font-semibold text-xs rounded-lg transition"
                 >
-                  Manage Assigned Auditors ({auditors.length})
+                  Manage assigned assessors ({auditors.length})
                 </button>
               </div>
             </div>
@@ -872,7 +873,7 @@ export default function OrganizationProfileFullPage({
                   onClick={() => setShowAssignModal(true)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-500 to-blue-600 text-white rounded-lg text-xs font-semibold shadow-xs hover:opacity-95 transition"
                 >
-                  <Plus className="h-3.5 w-3.5" /> + Assign Auditor
+                  <Plus className="h-3.5 w-3.5" /> Assign assessor
                 </button>
               ) : (
                 <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
@@ -885,14 +886,14 @@ export default function OrganizationProfileFullPage({
             <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5 text-xs text-slate-600">
               <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs">
                 <ShieldCheck className="h-4 w-4 text-teal-600 shrink-0" />
-                <span>Auditor Access &amp; Evaluation Privileges</span>
+                <span>Assessor access &amp; evaluation privileges</span>
               </div>
               <ul className="space-y-1 text-xs text-slate-500 leading-tight">
                 <li>
                   <strong className="text-slate-700">Owner (Full Edit Access):</strong> Initiates assessments, evaluates controls, and uploads evidence.
                 </li>
                 <li>
-                  <strong className="text-slate-700">Auditor (Review Access):</strong> Authorized co-auditor permitted to review working papers.
+                  <strong className="text-slate-700">Assessor (review access):</strong> Authorized assessor permitted to review working papers.
                 </li>
                 <li>
                   <strong className="text-slate-700">Submitted Assessments:</strong> Formally locked to Read-Only / View Only for all parties.
@@ -907,7 +908,7 @@ export default function OrganizationProfileFullPage({
                 <p className="font-bold text-slate-800 text-sm">No Assessors Assigned</p>
                 <p className="text-xs text-slate-400">
                   {isAdmin
-                    ? 'Click "+ Assign Auditor" above to grant an assessor review privileges for this company.'
+                    ? 'Use "Assign assessor" above to grant review privileges for this client organization.'
                     : "No certified assessors have been mapped to this organization by the platform administrator yet."}
                 </p>
               </div>
@@ -949,7 +950,7 @@ export default function OrganizationProfileFullPage({
                                   isLeadOwner ? "bg-emerald-500" : "bg-blue-500"
                                 }`}
                               />
-                              {isLeadOwner ? "Owner (Full Edit Access)" : "Auditor (Review Access)"}
+                              {isLeadOwner ? "Owner (full edit access)" : "Assessor (review access)"}
                             </span>
 
                             {isSubmitted && (
@@ -972,7 +973,7 @@ export default function OrganizationProfileFullPage({
                           onClick={() => handleUnassignAuditor(item.mappingId, a?.name || "Assessor")}
                           disabled={isUnassigning}
                           className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-50"
-                          title="Unassign auditor"
+                          title="Unassign assessor"
                         >
                           {isUnassigning ? (
                             <RefreshCw className="h-4 w-4 animate-spin text-rose-500" />
@@ -1003,12 +1004,12 @@ export default function OrganizationProfileFullPage({
         )}
       </div>
 
-      {/* Modal: Assign Auditor */}
+      {/* Modal: Assign assessor */}
       {showAssignModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-in zoom-in-95">
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <h3 className="font-bold text-slate-900 text-sm">Assign Auditor to {company.name}</h3>
+              <h3 className="font-bold text-slate-900 text-sm">Assign assessor to {company.name}</h3>
               <button onClick={() => setShowAssignModal(false)} className="text-slate-400 hover:text-slate-600">
                 ✕
               </button>
@@ -1162,12 +1163,13 @@ export default function OrganizationProfileFullPage({
             />
           </div>
           <div>
-            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Phone</label>
-            <input
-              type="tel"
+            <PhoneInput
+              label="Phone"
               value={editForm.contactPhone}
-              onChange={(e) => setEditForm({ ...editForm, contactPhone: e.target.value })}
-              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+              onChange={(contactPhone) => setEditForm({ ...editForm, contactPhone })}
+              linkedCountryName={editForm.country}
+              placeholder="Enter number without country code"
+              className="[&_label]:text-[11px] [&_label]:uppercase [&_label]:text-slate-500 [&_input]:text-sm"
             />
           </div>
           <div className="col-span-2 flex items-center justify-end gap-2 pt-2 border-t border-slate-100">

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getAdminDashboardSummary,
+  getAdminScopeOrganizations,
   getAdminDashboardAssessments,
   getAdminDashboardAnalytics,
   getAuditorDashboardSummary,
@@ -72,6 +73,13 @@ router.get(
   authenticate,
   authorize("SuperAdmin", "Admin", "TenantAdmin"),
   getAdminDashboardAnalytics
+);
+
+router.get(
+  "/admin/scope-organizations",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  getAdminScopeOrganizations
 );
 
 router.get(

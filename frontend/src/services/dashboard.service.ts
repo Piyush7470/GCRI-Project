@@ -76,6 +76,19 @@ export const dashboardService = {
   getAdminAnalytics: (params?: { range?: AnalyticsRange; companyId?: string }) =>
     apiClient.get<DashboardAnalytics>("/dashboard/admin/analytics", { params }),
 
+  getAdminScopeOrganizations: (params?: { search?: string; limit?: number }) =>
+    apiClient.get<
+      Array<{
+        _id: string;
+        name: string;
+        domain?: string;
+        industry?: string;
+        status?: string;
+        activePlan?: string;
+        logoUrl?: string | null;
+      }>
+    >("/dashboard/admin/scope-organizations", { params }),
+
   getAuditorAnalytics: (params?: { range?: AnalyticsRange }) =>
     apiClient.get<DashboardAnalytics>("/dashboard/auditor/analytics", { params }),
 

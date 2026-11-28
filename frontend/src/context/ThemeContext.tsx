@@ -5,12 +5,17 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
+import { useServerInsertedHTML } from "next/navigation";
 
 export type ThemeMode = "light" | "dark";
 
 const STORAGE_KEY = "graice-theme";
+
+/** Runs before paint on first HTML response to avoid theme flash (React 19–safe via useServerInsertedHTML). */
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('${STORAGE_KEY}');if(t==='dark'){document.documentElement.classList.add('dark');document.documentElement.style.colorScheme='dark';}else{document.documentElement.classList.remove('dark');document.documentElement.style.colorScheme='light';}}catch(e){}})();`;
 
 type ThemeContextValue = {
   theme: ThemeMode;
@@ -37,6 +42,18 @@ function readStoredTheme(): ThemeMode {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const themeScriptInserted = useRef(false);
+  useServerInsertedHTML(() => {
+    if (themeScriptInserted.current) return null;
+    themeScriptInserted.current = true;
+    return (
+      <script
+        suppressHydrationWarning
+        dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
+      />
+    );
+  });
+
   const [theme, setThemeState] = useState<ThemeMode>("light");
 
   useEffect(() => {

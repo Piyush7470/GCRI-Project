@@ -256,6 +256,60 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
 }
 
 /**
+ * Searchable organization list for dashboard scope control (SuperAdmin / Tenant Admin / Org Admin).
+ */
+export async function getAdminScopeOrganizations(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!isDashboardAdminRole(req.user?.role)) {
+      return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
+    }
+
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
+    }
+
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string, 10) || 100));
+    const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+
+    const filter: Record<string, unknown> = { ...scope.orgFilter };
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      filter.$or = [{ name: regex }, { domain: regex }, { industry: regex }];
+    }
+
+    const companies = await Company.find(filter)
+      .select("name domain industry status activePlan logo")
+      .sort({ name: 1 })
+      .limit(limit)
+      .lean();
+
+    const payload = companies.map((c) => ({
+      _id: String(c._id),
+      name: c.name,
+      domain: c.domain,
+      industry: c.industry,
+      status: c.status,
+      activePlan: c.activePlan || "Bronze",
+      logoUrl:
+        c.logo && typeof c.logo === "object" && "url" in c.logo
+          ? String((c.logo as { url?: string }).url || "")
+          : null,
+    }));
+
+    return sendSuccess(res, payload);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * Rich analytics for Admin / SuperAdmin dashboards (charts, trends, outliers).
  * Query: ?range=30d|90d|6m|1y&companyId=<optional scope>
  */
