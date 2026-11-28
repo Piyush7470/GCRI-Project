@@ -3,8 +3,9 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { companyService } from "@/services/company.service";
-import { Company, SubscriptionTier } from "@/types/company.types";
+import { dashboardService } from "@/services/dashboard.service";
+import { Company, CompanyStatus, SubscriptionTier } from "@/types/company.types";
+import { getUserFacingApiError } from "@/lib/authUser";
 import { SubscriptionsPageSkeleton, DataTableSkeleton } from "@/components/shared/PageSkeletons";
 import { ListPagination } from "@/components/shared/ListPagination";
 import { useClientPagination } from "@/hooks/useClientPagination";
@@ -117,11 +118,24 @@ export default function SubscriptionsPage() {
     try {
       setLoading(true);
       setError(null);
-      const res = await companyService.getCompanies();
-      setCompanies(res.data || []);
-    } catch (err: any) {
+      const res = await dashboardService.getAdminScopeOrganizations({ limit: 200 });
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      setCompanies(
+        rows.map(
+          (c): Company => ({
+            _id: c._id,
+            name: c.name,
+            domain: c.domain || "",
+            industry: c.industry,
+            status: (c.status as CompanyStatus) || "Active",
+            activePlan: (c.activePlan as SubscriptionTier) || "Bronze",
+            verificationStatus: "Pending",
+          })
+        )
+      );
+    } catch (err: unknown) {
       console.error("Failed to load companies for subscription overview:", err);
-      setError(err?.response?.data?.message || err?.message || "Failed to load subscription tier data.");
+      setError(getUserFacingApiError(err, "subscription tier data"));
     } finally {
       setLoading(false);
     }
@@ -160,7 +174,11 @@ export default function SubscriptionsPage() {
 
   const companiesPagination = useClientPagination(filteredCompanies);
 
-  if (authLoading || !isSuperAdmin) {
+  if (authLoading) {
+    return <SubscriptionsPageSkeleton />;
+  }
+
+  if (!isSuperAdmin) {
     return (
       <div className="max-w-2xl mx-auto my-12 surface-panel p-8 text-center space-y-4 shadow-xs">
         <div className="h-12 w-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
