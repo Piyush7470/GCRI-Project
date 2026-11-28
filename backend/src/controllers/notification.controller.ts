@@ -14,7 +14,7 @@ export async function getPlatformNotifications(req: Request, res: Response, next
       ? (req.query.category as NotificationCategory)
       : "all";
     const search = typeof req.query.search === "string" ? req.query.search : undefined;
-    const limit = parseInt(String(req.query.limit || "40"), 10);
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "10"), 10) || 10));
     const hours = parseInt(String(req.query.hours || String(24 * 7)), 10);
 
     const result = await buildPlatformNotifications({

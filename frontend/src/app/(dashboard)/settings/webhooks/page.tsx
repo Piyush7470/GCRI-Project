@@ -452,6 +452,8 @@ export default function WebhooksPage() {
               onNext={webhooksPagination.goNext}
               itemLabel="webhooks"
               disabled={loading}
+              pageSize={webhooksPagination.pageSize}
+              onPageSizeChange={webhooksPagination.setPageSize}
             />
             </>
           )}

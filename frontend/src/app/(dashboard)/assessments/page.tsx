@@ -345,6 +345,8 @@ export default function AssessmentsPage() {
                 onPrevious={tenantPagination.goPrev}
                 onNext={tenantPagination.goNext}
                 itemLabel="assessments"
+                pageSize={tenantPagination.pageSize}
+                onPageSizeChange={tenantPagination.setPageSize}
               />
             </>
           ) : (
@@ -427,6 +429,8 @@ export default function AssessmentsPage() {
               onPrevious={adminPagination.goPrev}
               onNext={adminPagination.goNext}
               itemLabel="assessments"
+              pageSize={adminPagination.pageSize}
+              onPageSizeChange={adminPagination.setPageSize}
             />
             </>
           ) : (
@@ -589,6 +593,8 @@ export default function AssessmentsPage() {
                 onNext={auditorPagination.goNext}
                 itemLabel="assessments"
                 className="border-t-0"
+                pageSize={auditorPagination.pageSize}
+                onPageSizeChange={auditorPagination.setPageSize}
               />
             </div>
             </>

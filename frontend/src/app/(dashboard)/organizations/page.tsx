@@ -42,6 +42,8 @@ import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { EntityImage } from "@/components/shared/EntityImage";
 import { ImageUploader } from "@/components/shared/ImageUploader";
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { ListPagination } from "@/components/shared/ListPagination";
+import { DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 import { fieldPlaceholder } from "@/lib/formPlaceholders";
 import { PasswordInput } from "@/components/shared/PasswordInput";
 import { PhoneInput } from "@/components/shared/PhoneInput";
@@ -50,7 +52,6 @@ import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
 import {
   loadCountryOptions,
   loadIndustryOptions,
-  loadPageSizeOptions,
   loadSubscriptionTierOptions,
 } from "@/lib/searchSelectLoaders";
 import {
@@ -87,7 +88,7 @@ export default function OrganizationsPage() {
 
   // Pagination & Filtering
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [paginationMeta, setPaginationMeta] = useState({
     page: 1,
     limit: 10,
@@ -970,65 +971,23 @@ export default function OrganizationsPage() {
           </table>
         </div>
 
-        {/* Live Pagination Footer (Fixed at Table Bottom) */}
-        <div className="py-2.5 px-3.5 bg-slate-50/70 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2.5 text-xs text-slate-600 shrink-0">
-          <div className="flex items-center gap-3">
-            <div>
-              Showing{" "}
-              <span className="font-semibold text-slate-900">
-                {companies.length > 0 ? (page - 1) * limit + 1 : 0}
-              </span>{" "}
-              to{" "}
-              <span className="font-semibold text-slate-900">
-                {Math.min(page * limit, paginationMeta.total)}
-              </span>{" "}
-              of{" "}
-              <span className="font-semibold text-slate-900">{paginationMeta.total}</span> organizations
-            </div>
-
-            {/* Rows Per Page Selector */}
-            <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
-              <span className="text-[11px] text-slate-500">Rows:</span>
-              <AsyncSearchSelect
-                compact
-                className="w-28"
-                value={String(limit)}
-                onChange={(v) => {
-                  setLimit(Number(v));
-                  setPage(1);
-                }}
-                loadOptions={loadPageSizeOptions}
-                searchPlaceholder="Rows per page…"
-                allowCustom={false}
-                pageSize={8}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1 || loading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition font-medium text-xs"
-            >
-              <ChevronLeft className="h-3 w-3" />
-              Previous
-            </button>
-
-            <span className="px-2 font-semibold text-slate-700 text-xs">
-              Page {paginationMeta.page} of {Math.max(1, paginationMeta.totalPages)}
-            </span>
-
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              disabled={page >= paginationMeta.totalPages || loading}
-              className="inline-flex items-center gap-1 px-2.5 py-1 border border-slate-300 rounded-lg bg-white hover:bg-slate-50 disabled:opacity-40 disabled:pointer-events-none transition font-medium text-xs"
-            >
-              Next
-              <ChevronRight className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
+        <ListPagination
+          className="shrink-0"
+          page={paginationMeta.page}
+          totalPages={Math.max(1, paginationMeta.totalPages)}
+          total={paginationMeta.total}
+          from={companies.length > 0 ? (page - 1) * limit + 1 : 0}
+          to={Math.min(page * limit, paginationMeta.total)}
+          onPrevious={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => setPage((p) => p + 1)}
+          disabled={loading}
+          itemLabel="organizations"
+          pageSize={limit}
+          onPageSizeChange={(size) => {
+            setLimit(size);
+            setPage(1);
+          }}
+        />
       </div>
 
         {/* Side Detail Drawer (Screen 4 Match) */}

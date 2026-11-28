@@ -296,6 +296,8 @@ function AssessmentFindingsContent() {
             onNext={findingsPagination.goNext}
             itemLabel="findings"
             className="border-t-0"
+            pageSize={findingsPagination.pageSize}
+            onPageSizeChange={findingsPagination.setPageSize}
           />
         </div>
         </>
@@ -359,6 +361,8 @@ function AssessmentFindingsContent() {
             onNext={recommendationsPagination.goNext}
             itemLabel="recommendations"
             className="rounded-xl border border-slate-200"
+            pageSize={recommendationsPagination.pageSize}
+            onPageSizeChange={recommendationsPagination.setPageSize}
           />
         </section>
       )}

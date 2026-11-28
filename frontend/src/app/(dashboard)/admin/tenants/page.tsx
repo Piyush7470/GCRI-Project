@@ -19,6 +19,8 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import { ListPagination } from "@/components/shared/ListPagination";
+import { DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 
 function statusPill(status: TenantStatus) {
   const map: Record<TenantStatus, string> = {
@@ -44,7 +46,9 @@ export default function AdminTenantsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalTenants, setTotalTenants] = useState(0);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -69,13 +73,19 @@ export default function AdminTenantsPage() {
     try {
       const res = await tenantService.listTenants({
         page,
-        limit: 20,
+        limit,
         search: debouncedSearch || undefined,
         status: statusFilter || undefined,
       });
       setTenants(Array.isArray(res.data) ? res.data : []);
-      const p = res.pagination as { pages?: number; totalPages?: number } | undefined;
+      const p = res.pagination as {
+        pages?: number;
+        totalPages?: number;
+        total?: number;
+        page?: number;
+      } | undefined;
       setTotalPages(p?.totalPages ?? p?.pages ?? 1);
+      setTotalTenants(p?.total ?? tenants.length);
     } catch (err: unknown) {
       const msg = getApiErrorMessage(err, "Failed to load tenants.");
       setError(
@@ -89,7 +99,7 @@ export default function AdminTenantsPage() {
     } finally {
       setLoading(false);
     }
-  }, [isSuperAdmin, page, debouncedSearch, statusFilter]);
+  }, [isSuperAdmin, page, limit, debouncedSearch, statusFilter]);
 
   useEffect(() => {
     if (!isSuperAdmin) {
@@ -267,29 +277,23 @@ export default function AdminTenantsPage() {
         </table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="flex justify-center gap-2">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-            className="px-3 py-1 text-xs border rounded-lg disabled:opacity-40"
-          >
-            Previous
-          </button>
-          <span className="text-xs text-slate-600 py-1">
-            Page {page} of {totalPages}
-          </span>
-          <button
-            type="button"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-            className="px-3 py-1 text-xs border rounded-lg disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      )}
+      <ListPagination
+        page={page}
+        totalPages={Math.max(1, totalPages)}
+        total={totalTenants}
+        from={totalTenants > 0 ? (page - 1) * limit + 1 : 0}
+        to={Math.min(page * limit, totalTenants)}
+        onPrevious={() => setPage((p) => Math.max(1, p - 1))}
+        onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
+        disabled={loading}
+        itemLabel="workspaces"
+        pageSize={limit}
+        onPageSizeChange={(size) => {
+          setLimit(size);
+          setPage(1);
+        }}
+        hideWhenEmpty={false}
+      />
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50">

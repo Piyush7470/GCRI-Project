@@ -608,6 +608,8 @@ export default function SubscriptionsPage() {
               onNext={companiesPagination.goNext}
               itemLabel="organizations"
               disabled={loading}
+              pageSize={companiesPagination.pageSize}
+              onPageSizeChange={companiesPagination.setPageSize}
             />
             </>
           )}

@@ -32,6 +32,8 @@ import { User as UserType } from "@/types/auth.types";
 import { Company } from "@/types/company.types";
 import { useAuth } from "@/context/AuthContext";
 import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { ListPagination } from "@/components/shared/ListPagination";
+import { DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
 import { loadOrganizationPicklist, loadUserPicklist } from "@/lib/searchSelectLoaders";
 import {
@@ -53,10 +55,10 @@ export default function AuditorMappingsPage() {
 
   // Pagination & Filtering
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit, setLimit] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [paginationMeta, setPaginationMeta] = useState({
     page: 1,
-    limit: 10,
+    limit: DEFAULT_LIST_PAGE_SIZE,
     total: 0,
     totalPages: 1,
   });
@@ -625,30 +627,23 @@ export default function AuditorMappingsPage() {
           </table>
         </div>
 
-        {/* Sticky Table Footer Pagination */}
-        <div className="bg-slate-50/90 border-t border-slate-200/80 px-4 py-2.5 flex items-center justify-between shrink-0 text-xs">
-          <div className="text-slate-500">
-            Page <span className="font-bold text-slate-800">{page}</span> of{" "}
-            <span className="font-bold text-slate-800">{paginationMeta.totalPages || 1}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1 || loading}
-              className="p-1 text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-md disabled:opacity-40 transition"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.min(paginationMeta.totalPages || 1, p + 1))}
-              disabled={page >= (paginationMeta.totalPages || 1) || loading}
-              className="p-1 text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-md disabled:opacity-40 transition"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
+        <ListPagination
+          className="shrink-0"
+          page={paginationMeta.page || page}
+          totalPages={Math.max(1, paginationMeta.totalPages || 1)}
+          total={totalCount}
+          from={totalCount > 0 ? (page - 1) * limit + 1 : 0}
+          to={Math.min(page * limit, totalCount)}
+          onPrevious={() => setPage((p) => Math.max(1, p - 1))}
+          onNext={() => setPage((p) => Math.min(paginationMeta.totalPages || 1, p + 1))}
+          disabled={loading}
+          itemLabel="mappings"
+          pageSize={limit}
+          onPageSizeChange={(size) => {
+            setLimit(size);
+            setPage(1);
+          }}
+        />
       </div>
 
       {/* Modal 1: Create New Assignment */}

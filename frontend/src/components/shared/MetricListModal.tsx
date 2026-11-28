@@ -6,6 +6,7 @@ import { ExternalLink, X } from "lucide-react";
 import { EntityImage } from "@/components/shared/EntityImage";
 import { ListPagination } from "@/components/shared/ListPagination";
 import { useClientPagination } from "@/hooks/useClientPagination";
+import { DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 
 export type MetricListRow = {
   id: string;
@@ -61,10 +62,10 @@ export function MetricListModal({
   emptyMessage = "No items to display.",
   footerHref,
   footerLabel = "Open full page",
-  pageSize = 8,
+  pageSize: initialPageSize = DEFAULT_LIST_PAGE_SIZE,
   size = "md",
 }: MetricListModalProps) {
-  const pagination = useClientPagination(rows, pageSize);
+  const pagination = useClientPagination(rows, initialPageSize);
 
   useEffect(() => {
     if (!open) return;
@@ -213,6 +214,8 @@ export function MetricListModal({
           onNext={pagination.goNext}
           itemLabel="items"
           className="shrink-0 rounded-none border-x-0 border-b-0"
+          pageSize={pagination.pageSize}
+          onPageSizeChange={pagination.setPageSize}
         />
 
         {footerHref && (
