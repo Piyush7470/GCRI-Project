@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
@@ -14,7 +14,6 @@ import {
   Users,
   CreditCard,
   Settings,
-  Bell,
   Search,
   ChevronRight,
   ChevronDown,
@@ -29,21 +28,51 @@ import {
   UserCheck,
   Menu,
   X,
+  RefreshCw,
+  Check,
+  Loader2,
 } from "lucide-react";
+import { dashboardService } from "@/services/dashboard.service";
+import {
+  DashboardScopeProvider,
+  useDashboardScope,
+} from "@/context/DashboardScopeContext";
+import { TenantProvider } from "@/context/TenantContext";
+import { TenantWorkspaceSwitcher } from "@/components/shared/TenantWorkspaceSwitcher";
+import { DashboardShellContentSkeleton } from "@/components/shared/PageSkeletons";
+import { BrandLogo } from "@/components/shared/BrandLogo";
+import { ThemeToggle } from "@/components/shared/ThemeToggle";
+import { EntityImage } from "@/components/shared/EntityImage";
+import { NotificationBell } from "@/components/shared/NotificationBell";
+import { useApiLoading } from "@/context/ApiLoadingContext";
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  return (
+    <DashboardScopeProvider>
+      <TenantProvider>
+        <DashboardLayoutContent>{children}</DashboardLayoutContent>
+      </TenantProvider>
+    </DashboardScopeProvider>
+  );
+}
+
+function DashboardLayoutContent({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, loading, logout, isAdmin, isSuperAdmin } = useAuth();
+  const { user, loading, logout, isSuperAdmin, isOrgAdmin, isAdmin, isTenantAdmin } = useAuth();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Strict Security: Role is determined strictly by the verified JWT session user
-  const activeRoleView: "Admin" | "Auditor" = (user?.role === "SuperAdmin" || user?.role === "Admin") ? "Admin" : "Auditor";
+  const activeRoleView: "Admin" | "Auditor" = isAdmin ? "Admin" : "Auditor";
 
   // Redirect non-authenticated users to login
   useEffect(() => {
@@ -57,51 +86,50 @@ export default function DashboardLayout({
     setMobileMenuOpen(false);
   }, [pathname]);
 
+  /** Fixed viewport + inner panes — only the live assessment workspace, not setup/review routes */
+  const isActiveAssessmentPlayer = Boolean(
+    pathname?.match(/^\/assessments\/[^/]+$/) && pathname !== "/assessments/new"
+  );
 
   const auditorNavItems = [
     { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
-    { label: "Assessments", href: "/assessments", icon: FileCheck2, hasChevron: true },
     { label: "Organizations", href: "/organizations", icon: Building2 },
-    { label: "Framework", href: "/admin/frameworks", icon: Sliders, hasChevron: true },
-    { label: "Evidence", href: "/evidence", icon: FolderLock },
-    { label: "Findings", href: "/assessments/findings", icon: Shield },
-    { label: "Reports", href: "/reports", icon: FileText },
+    { label: "Assessments", href: "/assessments", icon: FileCheck2 },
   ];
 
-  const auditorAdminNavItems = [
-    { label: "Subscriptions", href: "/subscriptions", icon: CreditCard },
-    { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
-    { label: "Settings", href: "/settings/profile", icon: Settings },
+  const auditorSettingsNavItems = [
+    { label: "Profile", href: "/settings/profile", icon: Settings },
+    { label: "Security & MFA", href: "/settings/security", icon: Shield },
   ];
 
-  // SuperAdmin sees global governance; Org Admin sees tenant items
+  // SuperAdmin: platform governance only. Tenant Admin owns auditor mapping + API keys.
   const adminNavItems = isSuperAdmin
     ? [
         { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
-        { label: "Organizations", href: "/organizations", icon: Building2 },
-        { label: "Users & Admins", href: "/admin/assessors", icon: Users },
-        { label: "Assessments", href: "/assessments", icon: FileCheck2 },
+        { label: "Tenant workspaces", href: "/admin/tenants", icon: FolderLock },
+        { label: "Users & Admins", href: "/admin/users", icon: Users },
         { label: "Framework Versions", href: "/admin/frameworks", icon: Layers },
-        { label: "Auditor Mappings", href: "/admin/auditor-mappings", icon: SlidersHorizontal },
-        { label: "Evidence", href: "/evidence", icon: FolderLock },
-        { label: "Reports", href: "/reports", icon: FileText },
         { label: "Subscriptions", href: "/subscriptions", icon: CreditCard },
         { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
-        { label: "System Settings", href: "/settings/security", icon: Settings },
       ]
     : [
         { label: "Dashboard", href: "/dashboard", icon: Home, active: pathname === "/dashboard" },
-        { label: "Organization", href: "/organizations", icon: Building2 },
-        { label: "Assessors / Team", href: "/admin/assessors", icon: Users },
+        { label: "Organizations", href: "/organizations", icon: Building2 },
+        { label: "Assessors / Team", href: "/admin/users", icon: Users },
         { label: "Assessments", href: "/assessments", icon: FileCheck2 },
-        { label: "Evidence", href: "/evidence", icon: FolderLock },
-        { label: "Reports", href: "/reports", icon: FileText },
+        { label: "Assessor mappings", href: "/admin/auditor-mappings", icon: UserCheck },
+        { label: "API Keys", href: "/admin/api-keys", icon: Lock },
         { label: "Audit Logs", href: "/admin/audit-logs", icon: History },
-        { label: "Settings", href: "/settings/profile", icon: Settings },
       ];
 
+  const adminSettingsNavItems = [
+    { label: "Profile", href: "/settings/profile", icon: Settings },
+    { label: "Security & MFA", href: "/settings/security", icon: Shield },
+    { label: "Webhooks", href: "/settings/webhooks", icon: SlidersHorizontal },
+  ];
+
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#f8fafc] flex">
+    <div className="h-screen w-screen overflow-hidden app-canvas flex">
       {/* Mobile Backdrop Overlay */}
       {mobileMenuOpen && (
         <div
@@ -116,15 +144,19 @@ export default function DashboardLayout({
           mobileMenuOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full"
         }`}
       >
-        {/* Brand Header */}
-        <div className="px-5 py-4 border-b border-[#18274a]/60 shrink-0 flex items-center justify-between">
-          <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)} className="flex items-center">
-            <img src="/logo.png" alt="GRAICE Logo" className="h-9 w-auto max-w-[190px] object-contain" />
+        {/* Brand Header — logo centered in the sidebar column */}
+        <div className="relative px-4 py-5 border-b border-[#18274a]/60 shrink-0 flex items-center justify-center">
+          <Link
+            href="/dashboard"
+            onClick={() => setMobileMenuOpen(false)}
+            className="flex min-w-0 items-center justify-center"
+          >
+            <BrandLogo variant="sidebar" className="mx-auto" />
           </Link>
           <button
             type="button"
             onClick={() => setMobileMenuOpen(false)}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+            className="lg:hidden absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
             aria-label="Close menu"
           >
             <X className="h-5 w-5" />
@@ -138,25 +170,22 @@ export default function DashboardLayout({
               <nav className="space-y-0.5">
                 {auditorNavItems.map((item) => {
                   const Icon = item.icon;
-                  const isActive = item.active || pathname === item.href;
+                  const isActive = item.active || pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
                   return (
                     <Link
                       key={item.label}
                       href={item.href}
                       onClick={() => setMobileMenuOpen(false)}
-                      className={`group flex items-center justify-between px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                      className={`dashboard-nav-link group flex items-center justify-between px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
                         isActive
                           ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
                           : "text-slate-100 hover:text-white hover:bg-white/10"
                       }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
                         <Icon className="h-[18px] w-[18px] shrink-0 text-white" strokeWidth={1.85} />
                         <span className="tracking-wide">{item.label}</span>
                       </div>
-                      {item.hasChevron && (
-                        <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-white transition-colors" />
-                      )}
                     </Link>
                   );
                 })}
@@ -164,21 +193,18 @@ export default function DashboardLayout({
 
               <div className="pt-2">
                 <div className="px-3 mb-1.5 text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">
-                  Administration
+                  Settings
                 </div>
                 <nav className="space-y-0.5">
-                  {auditorAdminNavItems.map((item) => {
+                  {auditorSettingsNavItems.map((item) => {
                     const Icon = item.icon;
-                    const isActive =
-                      pathname === item.href ||
-                      (item.label === "Users" &&
-                        (pathname.startsWith("/admin/assessors") || pathname.startsWith("/admin/users")));
+                    const isActive = pathname === item.href;
                     return (
                       <Link
                         key={item.label}
                         href={item.href}
                         onClick={() => setMobileMenuOpen(false)}
-                        className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                        className={`dashboard-nav-link group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
                           isActive
                             ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
                             : "text-slate-100 hover:text-white hover:bg-white/10"
@@ -191,155 +217,479 @@ export default function DashboardLayout({
                   })}
                 </nav>
               </div>
-
             </>
           ) : (
-            <nav className="space-y-0.5">
-              {adminNavItems.map((item) => {
-                const Icon = item.icon;
-                const isActive =
-                  item.active ||
-                  pathname === item.href ||
-                  (item.label === "Users" &&
-                    (pathname.startsWith("/admin/assessors") || pathname.startsWith("/admin/users")));
-                return (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
-                      isActive
-                        ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
-                        : "text-slate-100 hover:text-white hover:bg-white/10"
-                    }`}
-                  >
-                    <Icon className="h-[18px] w-[18px] shrink-0 text-white" strokeWidth={1.85} />
-                    <span className="tracking-wide">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
+            <>
+              <nav className="space-y-0.5">
+                {adminNavItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive =
+                    item.active ||
+                    pathname === item.href ||
+                    (item.href !== "/dashboard" && pathname.startsWith(item.href)) ||
+                    (item.href === "/admin/users" && (pathname.startsWith("/admin/users") || pathname.startsWith("/admin/assessors")));
+                  return (
+                    <Link
+                      key={item.label}
+                      href={item.href}
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={`dashboard-nav-link group flex items-center gap-2.5 min-w-0 px-3 py-1.5 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                        isActive
+                          ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
+                          : "text-slate-100 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      <Icon className="h-[18px] w-[18px] shrink-0 text-white" strokeWidth={1.85} />
+                      <span className="tracking-wide">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              <div className="pt-2">
+                <div className="px-3 mb-1.5 text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">
+                  Administration
+                </div>
+                <nav className="space-y-0.5">
+                  {adminSettingsNavItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = pathname === item.href;
+                    return (
+                      <Link
+                        key={item.label}
+                        href={item.href}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`group flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13.5px] font-medium transition-all duration-150 ${
+                          isActive
+                            ? "bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 text-white font-semibold shadow-md shadow-cyan-900/30"
+                            : "text-slate-100 hover:text-white hover:bg-white/10"
+                        }`}
+                      >
+                        <Icon className="h-[18px] w-[18px] shrink-0 text-white" strokeWidth={1.85} />
+                        <span className="tracking-wide">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </div>
+            </>
           )}
         </div>
       </aside>
 
       {/* Main Column */}
       <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden">
-        {/* Top Navbar - Fixed at top, never scrolls */}
-        <header className="h-16 bg-white border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 flex items-center justify-between shrink-0 z-30">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            {/* Hamburger Button for Mobile */}
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className="lg:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition shrink-0"
-              aria-label="Open sidebar"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-
-            {/* Search Box */}
-            <div className="relative w-full max-w-xs sm:max-w-sm md:max-w-md hidden sm:block">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder={
-                  activeRoleView === "Admin"
-                    ? "Search users, organizations, assessments, controls..."
-                    : "Search organizations, assessments, controls..."
-                }
-                className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
-              />
-            </div>
-          </div>
-
-          {/* Right Action Icons & User Profile */}
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-
-            {/* Notification Bell with Red Badge */}
-            <button className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-full transition">
-              <Bell className="h-5 w-5" />
-              <span className="absolute top-1.5 right-1.5 h-4 w-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center leading-none">
-                3
-              </span>
-            </button>
-
-            {/* Help Icon - hidden on very small screens */}
-            <button className="hidden sm:flex p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-full transition">
-              <HelpCircle className="h-5 w-5" />
-            </button>
-
-            {/* User Avatar & Dropdown */}
-            <div className="relative">
+        {/* Top bar — sticky; scope on second row below xl to avoid collisions */}
+        <header className="glass-header dashboard-top-bar shrink-0">
+          <div className="h-14 sm:h-[3.75rem] px-3 sm:px-5 lg:px-6 flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
               <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className="flex items-center gap-2 sm:gap-3 pl-1 sm:pl-2 pr-1 py-1 rounded-lg hover:bg-slate-100 transition text-left"
+                type="button"
+                onClick={() => setMobileMenuOpen(true)}
+                className="lg:hidden p-2 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-lg transition shrink-0"
+                aria-label="Open sidebar"
               >
-                <img
-                  src="/avatar.jpg"
-                  alt="Piyush Napit"
-                  className="h-8 w-8 sm:h-9 sm:w-9 rounded-full object-cover border border-slate-200"
-                />
-                <div className="hidden md:block">
-                  <div className="text-sm font-semibold text-slate-900 leading-tight">
-                    {user?.name || "Piyush Napit"}
-                  </div>
-                  <div className="text-xs text-slate-500 leading-tight">
-                    {activeRoleView === "Admin" ? "Super Admin" : "Auditor"}
-                  </div>
-                </div>
-                <ChevronDown className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-slate-400" />
+                <Menu className="h-5 w-5" />
               </button>
 
+              {pathname === "/dashboard" && (
+                <div className="hidden xl:flex items-center min-w-0 max-w-lg">
+                  <SearchableScopeSelector activeRoleView={activeRoleView} />
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              {pathname !== "/dashboard" && <TenantWorkspaceSwitcher />}
+              <ThemeToggle />
+
+              <NotificationBell isAdmin={isAdmin} />
+
+              <button
+                type="button"
+                className="hidden lg:flex p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:text-white dark:hover:bg-slate-800 rounded-full transition shrink-0"
+                aria-label="Help"
+              >
+                <HelpCircle className="h-5 w-5" />
+              </button>
+
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className="flex items-center gap-1.5 sm:gap-2 pl-1 pr-1.5 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition text-left max-w-[200px] xl:max-w-[240px]"
+                >
+                  <EntityImage
+                    src={user?.avatar?.url}
+                    name={user?.name}
+                    variant="avatar"
+                    size="md"
+                    cacheKey={user?.updatedAt || user?.avatar?.publicId}
+                    className="h-8 w-8 sm:h-9 sm:w-9 border border-slate-200 dark:border-slate-600 shrink-0"
+                  />
+                  <div className="hidden lg:block min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 leading-tight truncate">
+                      {user?.name || "User"}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight truncate">
+                      {isSuperAdmin
+                        ? "Super Admin"
+                        : isTenantAdmin
+                          ? "Tenant Admin"
+                          : isOrgAdmin
+                            ? "Org Admin"
+                            : "Assessor"}
+                    </div>
+                  </div>
+                  <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0 hidden sm:block" />
+                </button>
+
               {showProfileMenu && (
-                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-1.5 z-50 animate-in fade-in zoom-in-95">
-                  <div className="px-4 py-2 border-b border-slate-100">
-                    <p className="text-xs font-medium text-slate-500">Signed in as</p>
-                    <p className="text-sm font-semibold text-slate-900 truncate">
-                      {user?.email || "auditor@graice.io"}
+                <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 py-1.5 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800">
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Signed in as</p>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                      {user?.email || "user@graice.io"}
                     </p>
                   </div>
                   <Link
                     href="/settings/profile"
                     onClick={() => setShowProfileMenu(false)}
-                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
                   >
                     Profile Settings
                   </Link>
                   <Link
                     href="/settings/security"
                     onClick={() => setShowProfileMenu(false)}
-                    className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
                   >
                     Security &amp; 2FA
                   </Link>
-                  <div className="border-t border-slate-100 my-1" />
+                  <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
                   <button
                     onClick={logout}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40"
                   >
                     <LogOut className="h-4 w-4" /> Sign Out
                   </button>
                 </div>
               )}
+              </div>
             </div>
           </div>
+
+          {pathname === "/dashboard" && (
+            <div className="xl:hidden border-t border-slate-200/70 dark:border-slate-700/60 px-3 sm:px-5 py-2 flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <SearchableScopeSelector activeRoleView={activeRoleView} />
+            </div>
+          )}
         </header>
 
         {/* Workspace Canvas */}
         <main
-          className={`flex-1 bg-[#f8fafc] ${
+          className={`flex-1 app-canvas ${
             pathname?.includes("/admin/assessors") ||
             pathname?.includes("/admin/users") ||
             pathname?.includes("/admin/auditor-mappings") ||
-            pathname?.includes("/organizations")
-              ? "p-4 sm:p-5 overflow-hidden flex flex-col"
+            pathname?.includes("/organizations") ||
+            pathname?.includes("/admin/tenants") ||
+            isActiveAssessmentPlayer
+              ? "p-3 sm:p-4 overflow-hidden flex flex-col min-h-0"
               : "p-4 sm:p-6 lg:p-8 overflow-y-auto"
           }`}
         >
-          {children}
+          {loading && !user ? <DashboardShellContentSkeleton /> : children}
         </main>
       </div>
+    </div>
+  );
+}
+
+function SearchableScopeSelector({ activeRoleView }: { activeRoleView: "Admin" | "Auditor" }) {
+  const {
+    selectedOrgFilter,
+    setSelectedOrgFilter,
+    organizations,
+    setOrganizations,
+    refreshTrigger,
+    triggerRefresh,
+  } = useDashboardScope();
+  const { isLoading: apiBusy } = useApiLoading();
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [listOrgs, setListOrgs] = useState(organizations);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setListOrgs(organizations);
+  }, [organizations]);
+
+  const fetchScopeOrgs = useCallback(
+    async (search: string) => {
+      if (activeRoleView === "Auditor") {
+        const q = search.trim().toLowerCase();
+        if (!q) {
+          setListOrgs(organizations);
+          return;
+        }
+        setListOrgs(
+          organizations.filter((org) => {
+            const name = (org.name || "").toLowerCase();
+            const domain = (org.domain || "").toLowerCase();
+            const industry = (org.industry || "").toLowerCase();
+            return name.includes(q) || domain.includes(q) || industry.includes(q);
+          })
+        );
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const res = await dashboardService.getAdminScopeOrganizations({
+          search: search.trim() || undefined,
+          limit: 200,
+        });
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        setListOrgs(
+          rows.map((c) => ({
+            _id: c._id,
+            name: c.name,
+            domain: c.domain,
+            industry: c.industry,
+            status: c.status,
+            activePlan: c.activePlan,
+            logoUrl: c.logoUrl ?? null,
+          }))
+        );
+        if (!search.trim()) {
+          setOrganizations(
+            rows.map((c) => ({
+              _id: c._id,
+              name: c.name,
+              domain: c.domain,
+              industry: c.industry,
+              status: c.status,
+              activePlan: c.activePlan,
+              logoUrl: c.logoUrl ?? null,
+            }))
+          );
+        }
+      } catch {
+        setListOrgs(organizations);
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [activeRoleView, organizations, setOrganizations]
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setTimeout(() => {
+      void fetchScopeOrgs(searchTerm);
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [isOpen, searchTerm, fetchScopeOrgs, refreshTrigger]);
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      setTimeout(() => searchInputRef.current?.focus(), 50);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // Find currently selected organization
+  const selectedOrg = organizations.find((o) => o._id === selectedOrgFilter);
+
+  const filteredOrgs = listOrgs;
+
+  return (
+    <div ref={containerRef} className="relative flex items-center gap-1.5 sm:gap-2 min-w-0 max-w-full">
+      {/* Combobox Trigger Button */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all text-xs font-semibold shadow-2xs select-none ${
+          isOpen
+            ? "bg-white dark:bg-slate-900 border-blue-500 ring-2 ring-blue-100 dark:ring-blue-900/50 text-slate-900 dark:text-slate-100"
+            : selectedOrgFilter !== "all"
+            ? "bg-blue-50/80 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 hover:bg-blue-100/70 dark:hover:bg-blue-950/60"
+            : "bg-slate-50 dark:bg-slate-800 border-slate-200/90 dark:border-slate-600 text-slate-800 dark:text-slate-100 hover:bg-slate-100/80 dark:hover:bg-slate-700"
+        }`}
+      >
+        <Building2
+          className={`h-4 w-4 shrink-0 ${
+            selectedOrgFilter !== "all" ? "text-blue-600" : "text-slate-500"
+          }`}
+        />
+        <span className="text-slate-500 font-normal hidden sm:inline">Scope:</span>
+        <span className="truncate max-w-[7rem] sm:max-w-[10rem] md:max-w-[12rem]">
+          {selectedOrg ? selectedOrg.name : `All Organizations (${organizations.length})`}
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 text-slate-400 shrink-0 transition-transform duration-200 ${
+            isOpen ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {/* Clear Scope Button if specific org is selected */}
+      {selectedOrgFilter !== "all" && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedOrgFilter("all");
+          }}
+          title="Reset to All Organizations"
+          className="p-1 rounded-lg hover:bg-slate-200/80 text-slate-400 hover:text-slate-600 transition"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+
+      {/* Refresh Trigger Button */}
+      <button
+        type="button"
+        onClick={triggerRefresh}
+        title="Refresh Telemetry Data"
+        className="p-1.5 sm:p-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 transition shadow-2xs shrink-0"
+      >
+        <RefreshCw
+          className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${apiBusy ? "animate-spin text-blue-600" : ""}`}
+        />
+      </button>
+
+      {/* Popover Dropdown Panel */}
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-2 w-72 sm:w-80 md:w-96 bg-white rounded-2xl shadow-xl border border-slate-200/90 py-2.5 z-50 animate-in fade-in zoom-in-95">
+          {/* Search Box Header */}
+          <div className="px-3 pb-2 border-b border-slate-100">
+            <div className="relative flex items-center">
+              <Search className="absolute left-2.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Type to search organizations (name, domain)…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setIsOpen(false);
+                }}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full pl-8 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
+              />
+              {searchLoading ? (
+                <Loader2 className="absolute right-2 h-3.5 w-3.5 text-blue-600 animate-spin" />
+              ) : searchTerm ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2 p-0.5 text-slate-400 hover:text-slate-600 rounded"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5 px-0.5">Suggestions update as you type.</p>
+          </div>
+
+          {/* Organizations List */}
+          <div className="max-h-64 overflow-y-auto px-1.5 pt-1.5 space-y-0.5">
+            {/* Option: All Organizations */}
+            <div
+              onClick={() => {
+                setSelectedOrgFilter("all");
+                setIsOpen(false);
+                setSearchTerm("");
+              }}
+              className={`flex items-center justify-between px-2.5 py-2 rounded-xl cursor-pointer text-xs transition ${
+                selectedOrgFilter === "all"
+                  ? "bg-blue-50 text-blue-900 font-bold"
+                  : "hover:bg-slate-50 text-slate-700"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="h-6 w-6 rounded-lg bg-slate-900 text-white font-bold text-[9px] flex items-center justify-center shrink-0">
+                  ALL
+                </div>
+                <div>
+                  <div className="font-semibold text-slate-900">All Organizations</div>
+                  <div className="text-[10px] text-slate-400">Global tenant assurance view</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
+                  {organizations.length}
+                </span>
+                {selectedOrgFilter === "all" && <Check className="h-4 w-4 text-blue-600" />}
+              </div>
+            </div>
+
+            {/* List of Individual Organizations */}
+            {filteredOrgs.length > 0 ? (
+              filteredOrgs.map((org) => {
+                const isSelected = selectedOrgFilter === org._id;
+                return (
+                  <div
+                    key={org._id}
+                    onClick={() => {
+                      setSelectedOrgFilter(org._id);
+                      setIsOpen(false);
+                      setSearchTerm("");
+                    }}
+                    className={`flex items-center justify-between px-2.5 py-2 rounded-xl cursor-pointer text-xs transition ${
+                      isSelected
+                        ? "bg-blue-50 text-blue-900 font-bold"
+                        : "hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-6 w-6 rounded-lg bg-slate-800 text-white font-bold text-[9px] flex items-center justify-center shrink-0">
+                        {org.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-slate-900 truncate max-w-[160px] sm:max-w-[210px]">
+                          {org.name}
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate max-w-[160px] sm:max-w-[210px]">
+                          {org.domain || org.industry || "Enterprise Client"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {org.activePlan && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                          {org.activePlan}
+                        </span>
+                      )}
+                      {isSelected && <Check className="h-4 w-4 text-blue-600" />}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-6 text-center text-xs text-slate-400">
+                No organizations found matching &ldquo;{searchTerm}&rdquo;
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

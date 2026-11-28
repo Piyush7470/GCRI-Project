@@ -36,6 +36,44 @@ export const userService = {
   getCurrentUser: () =>
     apiClient.get<User>("/users/me"),
 
+  updateProfile: (payload: { name?: string; phone?: string }) =>
+    apiClient.patch<{ userId: string; email: string; name: string; phone?: string; role: string }>(
+      "/users/me",
+      payload
+    ),
+
+  uploadMyAvatar: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiClient.post<{
+      avatar: { url: string; publicId: string };
+      user: { _id: string; name: string; email: string; avatar?: User["avatar"] };
+    }>("/users/me/avatar", form);
+  },
+
+  deleteMyAvatar: () =>
+    apiClient.delete<{
+      message: string;
+      avatar: null;
+      user: { _id: string; name: string; email: string; avatar: null };
+    }>("/users/me/avatar"),
+
+  uploadUserAvatar: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiClient.post<{
+      avatar: { url: string; publicId: string };
+      user: { _id: string; name: string; email: string; avatar?: User["avatar"] };
+    }>(`/users/${id}/avatar`, form);
+  },
+
+  deleteUserAvatar: (id: string) =>
+    apiClient.delete<{
+      message: string;
+      avatar: null;
+      user: { _id: string; name: string; email: string; avatar: null };
+    }>(`/users/${id}/avatar`),
+
   getUsers: (params?: {
     page?: number;
     limit?: number;
@@ -60,8 +98,10 @@ export const userService = {
     email: string;
     password: string;
     role: string;
+    companyId?: string;
+    tenantId?: string;
   }) =>
-    apiClient.post("/auth/register", payload),
+    apiClient.post("/users/direct", payload),
 
   updateUserStatus: (id: string, status: UserStatus) =>
     apiClient.patch<{ message: string; user: { id: string; email: string; status: UserStatus } }>(
@@ -81,4 +121,3 @@ export const userService = {
   adminResetPassword: (id: string) =>
     apiClient.post<AdminResetPasswordResponse>(`/users/${id}/reset-password`),
 };
-

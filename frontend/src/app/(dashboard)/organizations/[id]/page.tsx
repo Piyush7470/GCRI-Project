@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
+import { OrganizationDetailSkeleton } from "@/components/shared/PageSkeletons";
 import {
   ArrowLeft,
   Building2,
@@ -23,16 +24,31 @@ import {
   ArrowRight,
   Activity,
   Award,
+  TrendingUp,
+  TrendingDown,
+  BarChart2,
+  MoreVertical,
+  Save,
 } from "lucide-react";
 import { companyService } from "@/services/company.service";
 import { auditorMappingService } from "@/services/auditorMapping.service";
 import { assessmentService } from "@/services/assessment.service";
 import { userService } from "@/services/user.service";
-import { Company, CompanyStatus } from "@/types/company.types";
+import {
+  Company,
+  CompanyStatus,
+  CompanyTrendsResponse,
+  SubscriptionTier,
+} from "@/types/company.types";
+import { formatOrgSubtitle, resolveCompanyContact } from "@/lib/companyDisplay";
 import { User as UserType } from "@/types/auth.types";
 import { AssessmentSession } from "@/types/assessment.types";
 import { OrgAuditorItem } from "@/types/auditorMapping.types";
 import Modal, { ConfirmationVariant } from "@/components/ui/Modal";
+import { useAuth } from "@/context/AuthContext";
+import { EntityImage } from "@/components/shared/EntityImage";
+import { ImageUploader } from "@/components/shared/ImageUploader";
+import { PhoneInput } from "@/components/shared/PhoneInput";
 
 export default function OrganizationProfileFullPage({
   params,
@@ -40,12 +56,30 @@ export default function OrganizationProfileFullPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const { user: currentUser, isAdmin, isSuperAdmin } = useAuth();
 
   const [company, setCompany] = useState<Company | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"overview" | "assessments" | "people" | "documents">("overview");
+
+  // Edit Profile modal (Actions → Edit Profile)
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    industry: "",
+    country: "",
+    registrationNumber: "",
+    activePlan: "Bronze" as SubscriptionTier,
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+  });
 
   // People & Auditor Mappings State
   const [auditors, setAuditors] = useState<OrgAuditorItem[]>([]);
@@ -88,6 +122,17 @@ export default function OrganizationProfileFullPage({
       const res = await companyService.getCompanyById(id);
       if (res?.data) {
         setCompany(res.data);
+        const contact = resolveCompanyContact(res.data);
+        setEditForm({
+          name: res.data.name || "",
+          industry: res.data.industry || "",
+          country: res.data.country || "",
+          registrationNumber: res.data.registrationNumber || "",
+          activePlan: res.data.activePlan || "Bronze",
+          contactName: contact.name || "",
+          contactEmail: contact.email || "",
+          contactPhone: contact.phone || "",
+        });
       }
     } catch (err: any) {
       console.error("Failed to load company profile:", err);
@@ -96,6 +141,62 @@ export default function OrganizationProfileFullPage({
       setLoading(false);
     }
   }, [id]);
+
+  const handleSaveProfileEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!company?._id) return;
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const updatedRes = await companyService.updateCompany(company._id, {
+        name: editForm.name.trim(),
+        industry: editForm.industry.trim() || undefined,
+        country: editForm.country.trim() || undefined,
+        registrationNumber: editForm.registrationNumber.trim() || undefined,
+        activePlan: editForm.activePlan,
+        primaryContact: {
+          name: editForm.contactName.trim() || undefined,
+          email: editForm.contactEmail.trim() || undefined,
+          phone: editForm.contactPhone.trim() || undefined,
+        },
+      });
+      if (updatedRes?.data) {
+        setCompany((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...updatedRes.data,
+                clientUser: prev.clientUser ?? updatedRes.data.clientUser,
+              }
+            : updatedRes.data
+        );
+      }
+      setEditModalOpen(false);
+      setEditSuccess(true);
+      setTimeout(() => setEditSuccess(false), 3000);
+    } catch (err: any) {
+      setEditError(err?.message || "Failed to update organization profile.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const openEditProfileModal = () => {
+    if (!company) return;
+    setEditForm({
+      name: company.name || "",
+      industry: company.industry || "",
+      country: company.country || "",
+      registrationNumber: company.registrationNumber || "",
+      activePlan: company.activePlan || "Bronze",
+      contactName: profileContact.name || "",
+      contactEmail: profileContact.email || "",
+      contactPhone: profileContact.phone || "",
+    });
+    setEditError(null);
+    setActionsMenuOpen(false);
+    setEditModalOpen(true);
+  };
 
   // Fetch Assigned Auditors
   const fetchAssignedAuditors = useCallback(async () => {
@@ -127,8 +228,27 @@ export default function OrganizationProfileFullPage({
     }
   }, [id]);
 
-  // Fetch Assessors for Assignment Dropdown
+  // Fetch Longitudinal Maturity Trends
+  const [trends, setTrends] = useState<CompanyTrendsResponse | null>(null);
+  const [trendsLoading, setTrendsLoading] = useState(false);
+
+  const fetchTrends = useCallback(async () => {
+    setTrendsLoading(true);
+    try {
+      const res = await companyService.getCompanyTrends(id);
+      if (res?.data) {
+        setTrends(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch company trends:", err);
+    } finally {
+      setTrendsLoading(false);
+    }
+  }, [id]);
+
+  // Fetch Assessors for Assignment Dropdown (Admin only)
   const fetchAvailableAssessors = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const res = await userService.getUsers({ limit: 100, role: "Assessor" });
       if (res?.data) {
@@ -137,14 +257,15 @@ export default function OrganizationProfileFullPage({
     } catch (err) {
       console.error("Failed to fetch assessors:", err);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     fetchCompany();
     fetchAssignedAuditors();
     fetchCompanyAssessments();
     fetchAvailableAssessors();
-  }, [fetchCompany, fetchAssignedAuditors, fetchCompanyAssessments, fetchAvailableAssessors]);
+    fetchTrends();
+  }, [fetchCompany, fetchAssignedAuditors, fetchCompanyAssessments, fetchAvailableAssessors, fetchTrends]);
 
   // Handle Assign Auditor
   const handleAssignAuditor = async (e: React.FormEvent) => {
@@ -227,8 +348,8 @@ export default function OrganizationProfileFullPage({
           </p>
           <p className="text-[11px] text-slate-400">
             {isSuspending
-              ? "Suspending this client organization will immediately restrict access to active assessment sessions and audit operations."
-              : "Activating this organization restores full access to assessment audits and compliance reporting."}
+              ? "Suspending blocks new user invites, direct adds, and new assessor assignments for this organization until you activate it again."
+              : "Activating restores operations and allows adding users to this organization again."}
           </p>
         </div>
       ),
@@ -248,14 +369,7 @@ export default function OrganizationProfileFullPage({
   };
 
   if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="flex flex-col items-center gap-2 text-slate-500 text-xs">
-          <RefreshCw className="h-6 w-6 animate-spin text-teal-600" />
-          <span>Loading organization profile...</span>
-        </div>
-      </div>
-    );
+    return <OrganizationDetailSkeleton />;
   }
 
   if (error || !company) {
@@ -272,9 +386,10 @@ export default function OrganizationProfileFullPage({
     );
   }
 
-  const completedCount = assessments.filter((a) => a.status === "Completed").length;
-  const inProgressCount = assessments.filter((a) => a.status === "InProgress" || a.status === "Submitted").length;
+  const completedCount = assessments.filter((a) => a.status === "Submitted").length;
+  const inProgressCount = assessments.filter((a) => a.status === "InProgress").length;
   const latestAssessment = assessments[0] || null;
+  const profileContact = resolveCompanyContact(company);
 
   return (
     <div className="h-full flex flex-col gap-4 min-h-0">
@@ -287,12 +402,16 @@ export default function OrganizationProfileFullPage({
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-teal-500 via-cyan-600 to-blue-600 text-white font-black text-base flex items-center justify-center shrink-0 shadow-xs">
-            {company.name.slice(0, 2).toUpperCase()}
-          </div>
+          <EntityImage
+            src={company.logo?.url}
+            name={company.name}
+            variant="logo"
+            size="lg"
+            cacheKey={company.updatedAt || company.logo?.publicId}
+          />
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-black text-slate-900 tracking-tight">{company.name}</h1>
+              <h1 className="page-title text-xl sm:text-2xl font-black tracking-tight">{company.name}</h1>
               <span
                 className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                   company.status === "Active"
@@ -308,36 +427,44 @@ export default function OrganizationProfileFullPage({
                 {company.status === "Active" ? "Active Client" : "Suspended"}
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {company.industry || "General Industry"} &bull; {company.country || "Global"} &bull;{" "}
-              <a
-                href={`https://${company.domain}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-teal-600 hover:underline font-medium inline-flex items-center gap-0.5"
-              >
-                {company.domain} <ExternalLink className="h-2.5 w-2.5" />
-              </a>
+            <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5">
+              <span>{formatOrgSubtitle(company)}</span>
+              {company.domain ? (
+                <>
+                  <span className="text-slate-300">·</span>
+                  <a
+                    href={`https://${company.domain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-teal-600 hover:underline font-medium inline-flex items-center gap-0.5"
+                  >
+                    {company.domain} <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                </>
+              ) : null}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleToggleStatus}
-            className={`p-2 border rounded-lg text-xs flex items-center gap-1.5 font-medium shadow-2xs transition ${
-              company.status === "Active"
-                ? "border-rose-200 text-rose-600 hover:bg-rose-50"
-                : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
-            }`}
-          >
-            {company.status === "Active" ? "Suspend Account" : "Activate Account"}
-          </button>
+          {isSuperAdmin && (
+            <button
+              onClick={handleToggleStatus}
+              className={`p-2 border rounded-lg text-xs flex items-center gap-1.5 font-medium shadow-2xs transition ${
+                company.status === "Active"
+                  ? "border-rose-200 text-rose-600 hover:bg-rose-50"
+                  : "border-emerald-200 text-emerald-600 hover:bg-emerald-50"
+              }`}
+            >
+              {company.status === "Active" ? "Suspend Account" : "Activate Account"}
+            </button>
+          )}
           <button
             onClick={() => {
               fetchCompany();
               fetchAssignedAuditors();
               fetchCompanyAssessments();
+              fetchTrends();
             }}
             className="p-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 text-xs flex items-center gap-1.5 font-medium shadow-2xs"
           >
@@ -385,7 +512,7 @@ export default function OrganizationProfileFullPage({
               : "border-transparent text-slate-500 hover:text-slate-900"
           }`}
         >
-          <span>People &amp; Assigned Auditors</span>
+          <span>People &amp; assigned assessors</span>
           <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-cyan-100 text-cyan-800 font-bold">
             {auditors.length}
           </span>
@@ -410,40 +537,120 @@ export default function OrganizationProfileFullPage({
         {activeTab === "overview" && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-2xs space-y-4 md:col-span-2">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-teal-600" />
-                Organization Profile
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-teal-600" />
+                  Organization Profile
+                </h3>
+                {(isAdmin || isSuperAdmin) && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setActionsMenuOpen((open) => !open)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-teal-700 bg-white hover:bg-teal-50 border border-slate-200 hover:border-teal-200 rounded-lg transition"
+                      aria-haspopup="menu"
+                      aria-expanded={actionsMenuOpen}
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" />
+                      Actions
+                    </button>
+                    {actionsMenuOpen && (
+                      <>
+                        <button
+                          type="button"
+                          className="fixed inset-0 z-10 cursor-default"
+                          aria-label="Close actions menu"
+                          onClick={() => setActionsMenuOpen(false)}
+                        />
+                        <div className="absolute right-0 top-full mt-1 z-20 min-w-[150px] rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+                          <button
+                            type="button"
+                            onClick={openEditProfileModal}
+                            className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-teal-50 hover:text-teal-800 inline-flex items-center gap-2"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            Edit Profile
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {editSuccess && (
+                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  Organization profile updated.
+                </p>
+              )}
+              {editError && (
+                <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                  {editError}
+                </p>
+              )}
+
+              {isAdmin && (
+                <ImageUploader
+                  variant="logo"
+                  label="Organization logo"
+                  name={company.name}
+                  currentUrl={company.logo?.url}
+                  cacheKey={company.updatedAt || company.logo?.publicId}
+                  onUpload={async (file) => {
+                    const res = await companyService.uploadLogo(company._id, file);
+                    setCompany((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            logo: res.data?.logo || prev.logo,
+                            updatedAt: new Date().toISOString(),
+                          }
+                        : prev
+                    );
+                    setEditSuccess(true);
+                    setTimeout(() => setEditSuccess(false), 3000);
+                  }}
+                  onRemove={async () => {
+                    await companyService.deleteLogo(company._id);
+                    setCompany((prev) =>
+                      prev ? { ...prev, logo: null, updatedAt: new Date().toISOString() } : prev
+                    );
+                    setEditSuccess(true);
+                    setTimeout(() => setEditSuccess(false), 3000);
+                  }}
+                />
+              )}
+
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Industry</span>
-                  <span className="font-semibold text-slate-800 text-sm">{company.industry || "Technology"}</span>
+                  <span className="font-semibold text-slate-800 text-sm">{company.industry || "—"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px] uppercase font-semibold">Size</span>
-                  <span className="font-semibold text-slate-800 text-sm">{company.size || "500 - 1,000 employees"}</span>
+                  <span className="text-slate-400 block text-[11px] uppercase font-semibold">Domain</span>
+                  <span className="font-semibold text-slate-800 text-sm">{company.domain || "—"}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Contact Person</span>
-                  <span className="font-semibold text-slate-900 text-sm">{company.clientUser?.name || "John Anderson"}</span>
+                  <span className="font-semibold text-slate-900 text-sm">{profileContact.name || "—"}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Email</span>
-                  {company.clientUser?.email ? (
-                    <a href={`mailto:${company.clientUser.email}`} className="font-semibold text-teal-600 hover:underline text-sm">
-                      {company.clientUser.email}
+                  {profileContact.email ? (
+                    <a href={`mailto:${profileContact.email}`} className="font-semibold text-teal-600 hover:underline text-sm">
+                      {profileContact.email}
                     </a>
                   ) : (
-                    <span className="font-semibold text-teal-600 text-sm">{`contact@${company.domain}`}</span>
+                    <span className="font-semibold text-slate-500 text-sm">—</span>
                   )}
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Phone</span>
-                  <span className="font-semibold text-slate-800 text-sm">{company.clientUser?.phone || "+1 212 555 0100"}</span>
+                  <span className="font-semibold text-slate-800 text-sm">{profileContact.phone || "—"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px] uppercase font-semibold">Address</span>
-                  <span className="font-semibold text-slate-800 text-sm">{company.country || "123 Business Ave, New York, USA"}</span>
+                  <span className="text-slate-400 block text-[11px] uppercase font-semibold">Country</span>
+                  <span className="font-semibold text-slate-800 text-sm">{company.country || "—"}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Registration Number</span>
@@ -451,13 +658,25 @@ export default function OrganizationProfileFullPage({
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">Subscription Tier</span>
-                  <span className="font-bold text-amber-700 text-sm">{company.activePlan || company.subscriptionTier || "Standard"}</span>
+                  <span className="font-bold text-amber-700 text-sm">{company.activePlan || "Bronze"}</span>
                 </div>
                 <div className="col-span-2">
                   <span className="text-slate-400 block text-[11px] uppercase font-semibold">DNS Verification</span>
-                  <span className="inline-flex items-center gap-1.5 text-emerald-700 font-semibold text-sm mt-0.5">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                    {(company.verificationStatus || company.dnsVerificationStatus) === "Verified" ? "Verified Domain" : "Pending Check"}
+                  <span
+                    className={`inline-flex items-center gap-1.5 font-semibold text-sm mt-0.5 ${
+                      company.verificationStatus === "Verified"
+                        ? "text-emerald-700"
+                        : company.verificationStatus === "Rejected"
+                          ? "text-rose-700"
+                          : "text-amber-700"
+                    }`}
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    {company.verificationStatus === "Verified"
+                      ? "Verified Domain"
+                      : company.verificationStatus === "Rejected"
+                        ? "Verification Rejected"
+                        : "Pending Check"}
                   </span>
                 </div>
               </div>
@@ -473,9 +692,95 @@ export default function OrganizationProfileFullPage({
                   onClick={() => setActiveTab("people")}
                   className="w-full py-2 bg-teal-50 hover:bg-teal-100 text-teal-700 font-semibold text-xs rounded-lg transition"
                 >
-                  Manage Assigned Auditors ({auditors.length})
+                  Manage assigned assessors ({auditors.length})
                 </button>
               </div>
+            </div>
+
+            {/* Longitudinal Maturity Progression Trends Card */}
+            <div className="md:col-span-3 bg-white rounded-xl border border-slate-200/90 p-5 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <BarChart2 className="h-4 w-4 text-teal-600" />
+                  <h3 className="font-bold text-slate-900 text-sm">
+                    Longitudinal Maturity &amp; Compliance Progression
+                  </h3>
+                </div>
+                {trends && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500 font-medium">
+                      Submitted Sessions: <strong className="text-slate-800">{trends.totalCompletedAssessments}</strong>
+                    </span>
+                    {trends.progressionDeltaPercentage !== 0 && (
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                          trends.progressionDeltaPercentage > 0
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-rose-50 text-rose-700 border border-rose-200"
+                        }`}
+                      >
+                        {trends.progressionDeltaPercentage > 0 ? (
+                          <TrendingUp className="h-3 w-3" />
+                        ) : (
+                          <TrendingDown className="h-3 w-3" />
+                        )}
+                        {trends.progressionDeltaPercentage > 0 ? "+" : ""}
+                        {trends.progressionDeltaPercentage}% Progression Delta
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {trendsLoading ? (
+                <div className="py-8 text-center text-xs text-slate-400 animate-pulse">
+                  Loading longitudinal audit trends...
+                </div>
+              ) : trends && trends.history && trends.history.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {trends.history.map((h, idx) => (
+                      <div
+                        key={h.assessmentId || idx}
+                        className="p-3.5 rounded-xl border border-slate-200/80 bg-slate-50/60 hover:bg-slate-50 transition space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-slate-800 font-mono">
+                            v{h.frameworkVersion} ({h.assessmentType})
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-white border border-slate-200 text-slate-700">
+                            {h.maturityLevel}
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-500">Compliance Score</span>
+                            <span className="font-bold text-slate-900">{h.overallPercentage}%</span>
+                          </div>
+                          <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className="bg-teal-600 h-1.5 rounded-full transition-all duration-500"
+                              style={{ width: `${Math.min(h.overallPercentage, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-200/60">
+                          <span>{h.controlsAssessed} Controls</span>
+                          <span>{h.exceptionsNoted} Exceptions</span>
+                          <span>{h.submittedAt ? new Date(h.submittedAt).toLocaleDateString() : "—"}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="py-6 text-center text-xs text-slate-500">
+                  <p>No submitted assessment sessions recorded for this organization yet.</p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Once assessments are submitted and finalized, historical compliance progression and maturity delta will automatically appear here.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -500,9 +805,9 @@ export default function OrganizationProfileFullPage({
               </div>
               <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs text-center">
                 <div className="text-2xl font-black text-slate-400">
-                  {assessments.filter((a) => a.status === "Draft").length}
+                  {assessments.filter((a) => a.status === "Archived").length}
                 </div>
-                <div className="text-xs text-slate-400 font-medium">Not Started</div>
+                <div className="text-xs text-slate-400 font-medium">Archived</div>
               </div>
             </div>
 
@@ -530,12 +835,12 @@ export default function OrganizationProfileFullPage({
                   <div className="flex items-center gap-3">
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        a.status === "Completed"
+                        a.status === "Submitted"
                           ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                           : "bg-blue-50 text-blue-700 border border-blue-200"
                       }`}
                     >
-                      {a.status === "Completed" ? "Completed" : "In Progress"}
+                      {a.status === "Submitted" ? "Submitted" : "In Progress"}
                     </span>
                     <Link
                       href={`/assessments/${a._id}`}
@@ -562,12 +867,38 @@ export default function OrganizationProfileFullPage({
                   Assessors mapped with authorization to verify this client organization.
                 </p>
               </div>
-              <button
-                onClick={() => setShowAssignModal(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-500 to-blue-600 text-white rounded-lg text-xs font-semibold shadow-xs hover:opacity-95 transition"
-              >
-                <Plus className="h-3.5 w-3.5" /> + Assign Auditor
-              </button>
+
+              {isAdmin ? (
+                <button
+                  onClick={() => setShowAssignModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-500 to-blue-600 text-white rounded-lg text-xs font-semibold shadow-xs hover:opacity-95 transition"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Assign assessor
+                </button>
+              ) : (
+                <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                  Managed by Platform Admin
+                </span>
+              )}
+            </div>
+
+            {/* Access Role & Evaluation Scope Guide Banner */}
+            <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5 text-xs text-slate-600">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs">
+                <ShieldCheck className="h-4 w-4 text-teal-600 shrink-0" />
+                <span>Assessor access &amp; evaluation privileges</span>
+              </div>
+              <ul className="space-y-1 text-xs text-slate-500 leading-tight">
+                <li>
+                  <strong className="text-slate-700">Owner (Full Edit Access):</strong> Initiates assessments, evaluates controls, and uploads evidence.
+                </li>
+                <li>
+                  <strong className="text-slate-700">Assessor (review access):</strong> Authorized assessor permitted to review working papers.
+                </li>
+                <li>
+                  <strong className="text-slate-700">Submitted Assessments:</strong> Formally locked to Read-Only / View Only for all parties.
+                </li>
+              </ul>
             </div>
 
             {/* List */}
@@ -576,15 +907,19 @@ export default function OrganizationProfileFullPage({
                 <Users className="h-8 w-8 text-slate-300 mx-auto" />
                 <p className="font-bold text-slate-800 text-sm">No Assessors Assigned</p>
                 <p className="text-xs text-slate-400">
-                  Click "+ Assign Auditor" above to grant an assessor review privileges for this company.
+                  {isAdmin
+                    ? 'Use "Assign assessor" above to grant review privileges for this client organization.'
+                    : "No certified assessors have been mapped to this organization by the platform administrator yet."}
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {auditors.map((item) => {
+                {auditors.map((item, idx) => {
                   const a = item.auditor;
                   const initial = a?.name?.charAt(0)?.toUpperCase() || "A";
                   const isUnassigning = unassigningId === item.mappingId;
+                  const isLeadOwner = idx === 0 || (assessments.length > 0 && a?._id === assessments[0]?.conductedByUserId);
+                  const isSubmitted = assessments.length > 0 && assessments[0]?.status === "Submitted";
 
                   return (
                     <div
@@ -600,26 +935,53 @@ export default function OrganizationProfileFullPage({
                             {a?.name || "Assessor"}
                           </div>
                           <div className="text-xs text-slate-500 truncate">{a?.email}</div>
+
+                          {/* Access Role Badge */}
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                                isLeadOwner
+                                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                  : "bg-blue-50 text-blue-800 border-blue-200"
+                              }`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  isLeadOwner ? "bg-emerald-500" : "bg-blue-500"
+                                }`}
+                              />
+                              {isLeadOwner ? "Owner (full edit access)" : "Assessor (review access)"}
+                            </span>
+
+                            {isSubmitted && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                                Submitted (View Only)
+                              </span>
+                            )}
+                          </div>
+
                           {item.assignedAt && (
-                            <div className="text-[10px] text-slate-400 mt-0.5">
+                            <div className="text-[10px] text-slate-400 mt-1">
                               Assigned {new Date(item.assignedAt).toLocaleDateString()}
                             </div>
                           )}
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => handleUnassignAuditor(item.mappingId, a?.name || "Assessor")}
-                        disabled={isUnassigning}
-                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-50"
-                        title="Unassign auditor"
-                      >
-                        {isUnassigning ? (
-                          <RefreshCw className="h-4 w-4 animate-spin text-rose-500" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleUnassignAuditor(item.mappingId, a?.name || "Assessor")}
+                          disabled={isUnassigning}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition disabled:opacity-50"
+                          title="Unassign assessor"
+                        >
+                          {isUnassigning ? (
+                            <RefreshCw className="h-4 w-4 animate-spin text-rose-500" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -642,12 +1004,12 @@ export default function OrganizationProfileFullPage({
         )}
       </div>
 
-      {/* Modal: Assign Auditor */}
+      {/* Modal: Assign assessor */}
       {showAssignModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-in zoom-in-95">
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <h3 className="font-bold text-slate-900 text-sm">Assign Auditor to {company.name}</h3>
+              <h3 className="font-bold text-slate-900 text-sm">Assign assessor to {company.name}</h3>
               <button onClick={() => setShowAssignModal(false)} className="text-slate-400 hover:text-slate-600">
                 ✕
               </button>
@@ -708,6 +1070,137 @@ export default function OrganizationProfileFullPage({
         variant={confirmModal.variant}
         loading={confirmModal.loading}
       />
+
+      {/* Edit Profile popup */}
+      <Modal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          setEditError(null);
+        }}
+        title="Edit Profile"
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSaveProfileEdit} className="grid grid-cols-2 gap-3 text-xs">
+          {editError && (
+            <div className="col-span-2 p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
+              {editError}
+            </div>
+          )}
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Name</label>
+            <input
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Industry</label>
+            <input
+              value={editForm.industry}
+              onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Country</label>
+            <input
+              value={editForm.country}
+              onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Registration Number
+            </label>
+            <input
+              value={editForm.registrationNumber}
+              onChange={(e) => setEditForm({ ...editForm, registrationNumber: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Subscription Tier
+            </label>
+            <select
+              value={editForm.activePlan}
+              onChange={(e) =>
+                setEditForm({ ...editForm, activePlan: e.target.value as SubscriptionTier })
+              }
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            >
+              <option value="Bronze">Bronze</option>
+              <option value="Silver">Silver</option>
+              <option value="Gold">Gold</option>
+            </select>
+          </div>
+          <div className="col-span-2 pt-1 border-t border-slate-100">
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+              Primary contact
+            </p>
+          </div>
+          <div className="col-span-2">
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">
+              Contact person
+            </label>
+            <input
+              value={editForm.contactName}
+              onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <label className="text-slate-500 block text-[11px] uppercase font-semibold mb-1">Email</label>
+            <input
+              type="email"
+              value={editForm.contactEmail}
+              onChange={(e) => setEditForm({ ...editForm, contactEmail: e.target.value })}
+              className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+            />
+          </div>
+          <div>
+            <PhoneInput
+              label="Phone"
+              value={editForm.contactPhone}
+              onChange={(contactPhone) => setEditForm({ ...editForm, contactPhone })}
+              linkedCountryName={editForm.country}
+              placeholder="Enter number without country code"
+              className="[&_label]:text-[11px] [&_label]:uppercase [&_label]:text-slate-500 [&_input]:text-sm"
+            />
+          </div>
+          <div className="col-span-2 flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                setEditModalOpen(false);
+                setEditError(null);
+              }}
+              className="px-3 py-1.5 text-xs font-semibold text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingEdit}
+              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-gradient-to-r from-teal-600 to-blue-600 rounded-lg disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {savingEdit ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-3.5 w-3.5" /> Save Changes
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

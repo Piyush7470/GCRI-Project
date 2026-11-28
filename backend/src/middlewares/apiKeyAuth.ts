@@ -3,7 +3,6 @@ import crypto from "crypto";
 import { ApiKey } from "../models/ApiKey.js";
 import { sendError } from "../utils/response.js";
 import { UserRole } from "../models/User.js";
-import { normalizeUserRole } from "./auth.js";
 
 /**
  * Middleware enabling service-to-service Machine-to-Machine (M2M) API Key authentication.
@@ -36,14 +35,10 @@ export async function authenticateApiKey(req: Request, res: Response, next: Next
     }
 
     // Attach synthetic User session for downstream handlers
-    const mappedRole: UserRole =
-      apiKey.role === "ReadOnly" ? "Auditor" : normalizeUserRole(apiKey.role);
-
     req.user = {
       userId: apiKey.createdBy.toString(),
       email: `m2m:${apiKey.name}`,
-      role: mappedRole,
-      tenantId: apiKey.tenantId?.toString(),
+      role: (apiKey.role === "ReadOnly" ? "Assessor" : apiKey.role) as UserRole,
       companyId: apiKey.companyId.toString(),
       scope: "authenticated",
     };

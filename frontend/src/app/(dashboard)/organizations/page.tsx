@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { OrganizationsTableSkeleton } from "@/components/shared/PageSkeletons";
 import {
   Building2,
   Plus,
   RefreshCw,
-  Search,
   Filter,
   MoreVertical,
   Edit3,
@@ -26,12 +27,37 @@ import {
   Sparkles,
 } from "lucide-react";
 import { companyService } from "@/services/company.service";
-import { auditorMappingService } from "@/services/auditorMapping.service";
+import {
+  applyOrganizationListFilters,
+  fetchAssessorAccessibleCompanies,
+} from "@/lib/auditorOrganizations";
 import { useAuth } from "@/context/AuthContext";
+import { useTenant } from "@/context/TenantContext";
 import { Company, CompanyStatus, VerificationStatus, SubscriptionTier } from "@/types/company.types";
+import { formatOrgSubtitle } from "@/lib/companyDisplay";
 import OrganizationDetailDrawer from "@/components/features/companies/OrganizationDetailDrawer";
+import { OrganizationFilterSearch } from "@/components/features/companies/OrganizationFilterSearch";
 import Modal, { ConfirmationVariant } from "@/components/ui/Modal";
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
+import { EntityImage } from "@/components/shared/EntityImage";
+import { ImageUploader } from "@/components/shared/ImageUploader";
+import { SummaryMetricTile } from "@/components/shared/SummaryMetricTile";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { PasswordInput } from "@/components/shared/PasswordInput";
+import { PhoneInput } from "@/components/shared/PhoneInput";
+import { getPasswordStrength } from "@/lib/passwordStrength";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import {
+  loadCountryOptions,
+  loadIndustryOptions,
+  loadPageSizeOptions,
+  loadSubscriptionTierOptions,
+} from "@/lib/searchSelectLoaders";
+import {
+  orgStatusFilterOptions,
+  orgTierFilterOptions,
+  orgVerificationFilterOptions,
+} from "@/lib/searchSelectOptions";
 
 export default function OrganizationsPage() {
   // Live Data State
@@ -61,10 +87,10 @@ export default function OrganizationsPage() {
 
   // Pagination & Filtering
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(10);
   const [paginationMeta, setPaginationMeta] = useState({
     page: 1,
-    limit: 20,
+    limit: 10,
     total: 0,
     totalPages: 1,
   });
@@ -73,6 +99,7 @@ export default function OrganizationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [verificationFilter, setVerificationFilter] = useState<string>("all");
   const [tierFilter, setTierFilter] = useState<string>("all");
+  const [assessorSuggestionPool, setAssessorSuggestionPool] = useState<Company[]>([]);
 
   // Modal 1: Onboard Organization Modal
   const [onboardModalOpen, setOnboardModalOpen] = useState(false);
@@ -84,16 +111,65 @@ export default function OrganizationsPage() {
     registrationNumber: "",
     country: "",
     industry: "",
-    subscriptionTier: "Gold" as SubscriptionTier,
+    subscriptionTier: "Bronze" as SubscriptionTier,
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+    contactPassword: "",
   });
+  const [onboardLogoFile, setOnboardLogoFile] = useState<File | null>(null);
 
-  const { user: currentUser, isAdmin } = useAuth();
+  const router = useRouter();
+  const { user: currentUser, isSuperAdmin, isAdmin, isAssessor } = useAuth();
+  const { activeTenantId, activeTenant, platformMode } = useTenant();
+
+  useEffect(() => {
+    if (isSuperAdmin && platformMode && !activeTenantId) {
+      router.replace("/admin/tenants");
+    }
+  }, [isSuperAdmin, platformMode, activeTenantId, router]);
+  const onboardTenantId =
+    activeTenantId || currentUser?.tenantId || undefined;
 
   // Action Menu Dropdown ID
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
 
   // Selected Company for Interactive Side Drawer (Matching Screen 4)
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const scrollToList = () => {
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const applyMetricTile = (preset: "all" | "active" | "verified" | "gold") => {
+    setPage(1);
+    setSearch("");
+    switch (preset) {
+      case "active":
+        setStatusFilter("Active");
+        setVerificationFilter("all");
+        setTierFilter("all");
+        break;
+      case "verified":
+        setStatusFilter("all");
+        setVerificationFilter("Verified");
+        setTierFilter("all");
+        break;
+      case "gold":
+        setStatusFilter("all");
+        setVerificationFilter("all");
+        setTierFilter("Gold");
+        break;
+      default:
+        setStatusFilter("all");
+        setVerificationFilter("all");
+        setTierFilter("all");
+        break;
+    }
+    scrollToList();
+  };
 
   // Debounce Search
   useEffect(() => {
@@ -117,50 +193,18 @@ export default function OrganizationsPage() {
           (currentUser as any)?.userId;
 
         let assignedCompanies: Company[] = [];
-
         if (auditorId) {
-          try {
-            const mappingsRes = await auditorMappingService.getMappingsByAuditor(auditorId);
-            const orgList =
-              (mappingsRes as any)?.data?.organizations ||
-              (mappingsRes as any)?.organizations ||
-              (mappingsRes as any)?.data ||
-              [];
-
-            assignedCompanies = orgList
-              .map((m: any) => m.organization || m.organizationId)
-              .filter((c: any) => c && typeof c === "object" && c._id);
-          } catch (mapErr) {
-            console.warn("Could not fetch auditor mappings:", mapErr);
-          }
+          assignedCompanies = await fetchAssessorAccessibleCompanies(String(auditorId));
         }
 
-        // Also fetch via standard companyService (which backend scopes to their company/assigned orgs)
-        try {
-          const directRes = await companyService.getCompanies({ limit: 100 });
-          if (directRes && directRes.data) {
-            for (const c of directRes.data) {
-              if (!assignedCompanies.some((ac) => ac._id === c._id)) {
-                assignedCompanies.push(c);
-              }
-            }
-          }
-        } catch (directErr) {
-          console.warn("Could not fetch direct companies:", directErr);
-        }
+        setAssessorSuggestionPool(assignedCompanies);
 
-        if (debouncedSearch.trim()) {
-          const q = debouncedSearch.trim().toLowerCase();
-          assignedCompanies = assignedCompanies.filter(
-            (c) =>
-              c.name.toLowerCase().includes(q) ||
-              c.domain.toLowerCase().includes(q)
-          );
-        }
-
-        if (statusFilter !== "all") {
-          assignedCompanies = assignedCompanies.filter((c) => c.status === statusFilter);
-        }
+        assignedCompanies = applyOrganizationListFilters(assignedCompanies, {
+          search: debouncedSearch,
+          status: statusFilter,
+          verificationStatus: verificationFilter,
+          tier: tierFilter,
+        });
 
         setCompanies(assignedCompanies);
         setPaginationMeta({
@@ -172,13 +216,15 @@ export default function OrganizationsPage() {
         return;
       }
 
-      // For Admin: Fetch platform-wide companies
+      // SuperAdmin: global directory. Org Admin: tenant-scoped via backend companyId filter.
+      // Backend supports: page, limit, search, status, verificationStatus — NOT tier.
       const params: {
         page: number;
         limit: number;
         search?: string;
         status?: string;
-        tier?: string;
+        verificationStatus?: string;
+        activePlan?: string;
       } = {
         page,
         limit,
@@ -190,17 +236,16 @@ export default function OrganizationsPage() {
       if (statusFilter !== "all") {
         params.status = statusFilter;
       }
+      if (verificationFilter !== "all") {
+        params.verificationStatus = verificationFilter;
+      }
       if (tierFilter !== "all") {
-        params.tier = tierFilter;
+        params.activePlan = tierFilter;
       }
 
       const res = await companyService.getCompanies(params);
       if (res && res.data) {
-        let dataList = res.data;
-        // Client-side filter for DNS verification status if specified
-        if (verificationFilter !== "all") {
-          dataList = dataList.filter((c) => c.dnsVerificationStatus === verificationFilter);
-        }
+        const dataList = Array.isArray(res.data) ? res.data : [];
 
         setCompanies(dataList);
         if (res.pagination) {
@@ -265,8 +310,8 @@ export default function OrganizationsPage() {
           </p>
           <p className="text-[11px] text-slate-400">
             {isSuspending
-              ? "Suspending this client organization will immediately restrict access to active assessment sessions and audit operations across all users."
-              : "Activating this organization restores full access to assessment audits, team collaboration, and compliance reporting."}
+              ? "Suspending blocks new user invites, direct adds, and new assessor assignments for this organization until you activate it again. Existing users keep their accounts but lose operational access per platform policy."
+              : "Activating restores assessments, collaboration, and the ability to add users to this organization again."}
           </p>
         </div>
       ),
@@ -320,7 +365,9 @@ export default function OrganizationsPage() {
           setConfirmModal((prev) => ({ ...prev, isOpen: false, loading: false }));
           fetchCompanies();
           if (selectedCompany?._id === company._id) {
-            setSelectedCompany((prev) => (prev ? { ...prev, dnsVerificationStatus: "Verified" } : null));
+            setSelectedCompany((prev) =>
+              prev ? { ...prev, verificationStatus: "Verified" } : null
+            );
           }
         } catch (err: any) {
           setError(err?.message || `DNS verification failed for ${company.domain}`);
@@ -334,22 +381,98 @@ export default function OrganizationsPage() {
   // Handle Onboard Organization Form Submit
   const handleSubmitOnboard = async (e: React.FormEvent) => {
     e.preventDefault();
-    setOnboardLoading(true);
     setOnboardError(null);
 
+    // Clean domain: remove protocols and trailing slashes
+    let cleanDomain = onboardForm.domain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+
+    if (cleanDomain.includes("@")) {
+      setOnboardError("Primary domain must be a web domain name (e.g. acme-ai.com or company.org), not an email address.");
+      return;
+    }
+
+    const domainRegex = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/;
+    if (!domainRegex.test(cleanDomain)) {
+      setOnboardError("Please provide a valid domain name (e.g. acme-ai.com or globalcorp.org).");
+      return;
+    }
+
+    if (isSuperAdmin && platformMode && !onboardTenantId) {
+      setOnboardError(
+        "Select a tenant workspace in the header (not Platform / all tenants), then onboard the organization under that workspace."
+      );
+      return;
+    }
+
+    const contactNameEarly = onboardForm.contactName.trim();
+    const contactEmailEarly = onboardForm.contactEmail.trim();
+    const contactPhoneEarly = onboardForm.contactPhone.trim();
+    const pwd = onboardForm.contactPassword.trim();
+    if (pwd && getPasswordStrength(pwd) === "weak") {
+      setOnboardError("Assessor password must be at least 8 characters with mixed character types (not weak).");
+      return;
+    }
+    if (pwd && !contactEmailEarly) {
+      setOnboardError("Enter an email ID to create an Assessor login with a password.");
+      return;
+    }
+    if (contactEmailEarly && pwd && !isSuperAdmin) {
+      setOnboardError("Only Super Admin can create an Assessor login during organization onboarding.");
+      return;
+    }
+
+    setOnboardLoading(true);
+
     try {
-      await companyService.createCompany({
+      const contactName = contactNameEarly;
+      const contactEmail = contactEmailEarly;
+      const contactPhone = contactPhoneEarly;
+      const primaryContact =
+        contactName || contactEmail || contactPhone
+          ? {
+              name: contactName || undefined,
+              email: contactEmail || undefined,
+              phone: contactPhone || undefined,
+            }
+          : undefined;
+
+      const assessorLogin =
+        isSuperAdmin && contactEmail
+          ? {
+              name: contactName || onboardForm.name.trim(),
+              email: contactEmail,
+              ...(pwd ? { password: pwd } : {}),
+            }
+          : undefined;
+
+      const created = await companyService.createCompany({
         name: onboardForm.name.trim(),
-        domain: onboardForm.domain.trim().toLowerCase(),
+        domain: cleanDomain,
         registrationNumber: onboardForm.registrationNumber.trim() || undefined,
         country: onboardForm.country.trim() || undefined,
         industry: onboardForm.industry.trim() || undefined,
-        subscriptionTier: onboardForm.subscriptionTier,
+        activePlan: onboardForm.subscriptionTier,
+        primaryContact,
+        ...(assessorLogin ? { user: assessorLogin } : {}),
+        ...(onboardTenantId ? { tenantId: onboardTenantId } : {}),
       });
 
+      const companyId = created?.data?.company?._id;
+      let logoNote = "";
+      if (companyId && onboardLogoFile) {
+        try {
+          await companyService.uploadLogo(companyId, onboardLogoFile);
+        } catch (logoErr: any) {
+          logoNote = ` Logo upload failed: ${logoErr?.message || "unknown error"}. You can retry from the organization profile.`;
+        }
+      }
+
       setOnboardModalOpen(false);
-      setActionSuccess(`Organization ${onboardForm.name} onboarded successfully!`);
-      setTimeout(() => setActionSuccess(null), 4000);
+      setOnboardLogoFile(null);
+      setActionSuccess(
+        `Organization ${onboardForm.name} onboarded successfully (${onboardForm.subscriptionTier} plan).${logoNote}`
+      );
+      setTimeout(() => setActionSuccess(null), 5000);
       fetchCompanies();
     } catch (err: any) {
       console.error("Onboard organization error:", err);
@@ -444,8 +567,8 @@ export default function OrganizationsPage() {
   // Live Metric Counts
   const totalCount = paginationMeta.total;
   const activeCount = companies.filter((c) => c.status === "Active").length;
-  const verifiedCount = companies.filter((c) => c.dnsVerificationStatus === "Verified").length;
-  const goldCount = companies.filter((c) => c.subscriptionTier === "Gold").length;
+  const verifiedCount = companies.filter((c) => c.verificationStatus === "Verified").length;
+  const goldCount = companies.filter((c) => c.activePlan === "Gold").length;
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 space-y-3 overflow-hidden">
@@ -472,67 +595,40 @@ export default function OrganizationsPage() {
         </div>
       )}
 
-      {/* Compact 4-Card Metric Grid (Fixed Top - Logo Inspired Colors) */}
+      {/* Compact 4-Card Metric Grid (click → list popup) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
-        {/* Card 1: Total Organizations - Ocean Blue */}
-        <div className="group relative overflow-hidden bg-white rounded-xl border border-slate-200/90 p-3.5 shadow-xs transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_12px_24px_-6px_rgba(15,23,42,0.08),0_4px_8px_-2px_rgba(15,23,42,0.03)] hover:border-cyan-300/80 flex items-center gap-3">
-          <div className="absolute top-0 inset-x-0 h-0.75 bg-gradient-to-r from-transparent via-cyan-500/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-          <div className="h-10 w-10 rounded-2xl bg-cyan-50 text-cyan-700 flex items-center justify-center shrink-0 border border-cyan-100 shadow-2xs transition-all duration-300 ease-out group-hover:scale-105 group-hover:ring-4 group-hover:ring-cyan-100/70">
-            <Building2 className="h-5 w-5" strokeWidth={1.85} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xl font-extrabold text-slate-900 leading-tight tracking-tight group-hover:text-slate-950 transition-colors">
-              <AnimatedNumber value={totalCount} delay={0} />
-            </div>
-            <div className="text-[11px] font-medium text-slate-500 truncate mt-0.5 group-hover:text-slate-600 transition-colors">Total Organizations</div>
-            <div className="text-[10px] font-semibold text-teal-600 mt-0.5">▲ Live in DB</div>
-          </div>
-        </div>
-
-        {/* Card 2: Active Clients - Emerald/Teal */}
-        <div className="group relative overflow-hidden bg-white rounded-xl border border-slate-200/90 p-3.5 shadow-xs transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_12px_24px_-6px_rgba(15,23,42,0.08),0_4px_8px_-2px_rgba(15,23,42,0.03)] hover:border-emerald-300/80 flex items-center gap-3">
-          <div className="absolute top-0 inset-x-0 h-0.75 bg-gradient-to-r from-transparent via-emerald-500/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-          <div className="h-10 w-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100 shadow-2xs transition-all duration-300 ease-out group-hover:scale-105 group-hover:ring-4 group-hover:ring-emerald-100/70">
-            <CheckCircle2 className="h-5 w-5" strokeWidth={1.85} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xl font-extrabold text-slate-900 leading-tight tracking-tight group-hover:text-slate-950 transition-colors">
-              <AnimatedNumber value={activeCount} delay={70} />
-            </div>
-            <div className="text-[11px] font-medium text-slate-500 truncate mt-0.5 group-hover:text-slate-600 transition-colors">Active Clients</div>
-            <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">● On this page</div>
-          </div>
-        </div>
-
-        {/* Card 3: DNS Verified - Teal */}
-        <div className="group relative overflow-hidden bg-white rounded-xl border border-slate-200/90 p-3.5 shadow-xs transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_12px_24px_-6px_rgba(15,23,42,0.08),0_4px_8px_-2px_rgba(15,23,42,0.03)] hover:border-teal-300/80 flex items-center gap-3">
-          <div className="absolute top-0 inset-x-0 h-0.75 bg-gradient-to-r from-transparent via-teal-500/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-          <div className="h-10 w-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center shrink-0 border border-teal-100 shadow-2xs transition-all duration-300 ease-out group-hover:scale-105 group-hover:ring-4 group-hover:ring-teal-100/70">
-            <ShieldCheck className="h-5 w-5" strokeWidth={1.85} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xl font-extrabold text-slate-900 leading-tight tracking-tight group-hover:text-slate-950 transition-colors">
-              <AnimatedNumber value={verifiedCount} delay={140} />
-            </div>
-            <div className="text-[11px] font-medium text-slate-500 truncate mt-0.5 group-hover:text-slate-600 transition-colors">DNS Verified</div>
-            <div className="text-[10px] font-semibold text-teal-600 mt-0.5">Cryptographic Check</div>
-          </div>
-        </div>
-
-        {/* Card 4: Gold Tier Subscribers - Amber/Royal */}
-        <div className="group relative overflow-hidden bg-white rounded-xl border border-slate-200/90 p-3.5 shadow-xs transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_12px_24px_-6px_rgba(15,23,42,0.08),0_4px_8px_-2px_rgba(15,23,42,0.03)] hover:border-amber-300/80 flex items-center gap-3">
-          <div className="absolute top-0 inset-x-0 h-0.75 bg-gradient-to-r from-transparent via-amber-500/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-          <div className="h-10 w-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 border border-amber-100 shadow-2xs transition-all duration-300 ease-out group-hover:scale-105 group-hover:ring-4 group-hover:ring-amber-100/70">
-            <Crown className="h-5 w-5" strokeWidth={1.85} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-xl font-extrabold text-slate-900 leading-tight tracking-tight group-hover:text-slate-950 transition-colors">
-              <AnimatedNumber value={goldCount} delay={210} />
-            </div>
-            <div className="text-[11px] font-medium text-slate-500 truncate mt-0.5 group-hover:text-slate-600 transition-colors">Gold Subscriptions</div>
-            <div className="text-[10px] font-semibold text-amber-600 mt-0.5">Enterprise Tier</div>
-          </div>
-        </div>
+        <SummaryMetricTile
+          tone="cyan"
+          icon={Building2}
+          value={<AnimatedNumber value={totalCount} delay={0} />}
+          label="Total Organizations"
+          subtext="▲ Live in DB · Filter list below"
+          onClick={() => applyMetricTile("all")}
+        />
+        <SummaryMetricTile
+          tone="emerald"
+          icon={CheckCircle2}
+          value={<AnimatedNumber value={activeCount} delay={70} />}
+          label="Active Clients"
+          subtext="Filter: Active status"
+          onClick={() => applyMetricTile("active")}
+        />
+        <SummaryMetricTile
+          tone="teal"
+          icon={ShieldCheck}
+          value={<AnimatedNumber value={verifiedCount} delay={140} />}
+          label="DNS Verified"
+          subtext="Filter: Verified DNS"
+          onClick={() => applyMetricTile("verified")}
+        />
+        <SummaryMetricTile
+          tone="amber"
+          icon={Crown}
+          value={<AnimatedNumber value={goldCount} delay={210} />}
+          label="Gold Subscriptions"
+          subtext="Filter: Gold tier"
+          onClick={() => applyMetricTile("gold")}
+        />
       </div>
 
       {/* Filter & Action Toolbar (Fixed) */}
@@ -540,24 +636,16 @@ export default function OrganizationsPage() {
         {/* Left: Search & Filter Dropdowns */}
         <div className="flex items-center gap-2 flex-1 flex-wrap">
           {/* Search Input */}
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search organizations or domain..."
-              className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
-          </div>
+          <OrganizationFilterSearch
+            className="flex-1 min-w-[180px] max-w-xs"
+            value={search}
+            onChange={setSearch}
+            localSuggestions={
+              isAssessor
+                ? assessorSuggestionPool.map((c) => ({ name: c.name, domain: c.domain }))
+                : undefined
+            }
+          />
 
           {/* Filter Dropdowns */}
           <div className="flex items-center gap-1.5 flex-wrap text-xs">
@@ -565,46 +653,45 @@ export default function OrganizationsPage() {
               <Filter className="h-3 w-3 text-slate-400" />
             </div>
 
-            <select
+            <AsyncSearchSelect
+              compact
+              className="min-w-[7.5rem]"
               value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value);
+              onChange={(v) => {
+                setStatusFilter(v);
                 setPage(1);
               }}
-              className="text-xs font-medium py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Suspended">Suspended</option>
-            </select>
-
-            <select
+              staticOptions={orgStatusFilterOptions}
+              searchPlaceholder="Search status…"
+              allowCustom={false}
+              pageSize={8}
+            />
+            <AsyncSearchSelect
+              compact
+              className="min-w-[8.5rem]"
               value={verificationFilter}
-              onChange={(e) => {
-                setVerificationFilter(e.target.value);
+              onChange={(v) => {
+                setVerificationFilter(v);
                 setPage(1);
               }}
-              className="text-xs font-medium py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-            >
-              <option value="all">DNS Verification</option>
-              <option value="Verified">Verified</option>
-              <option value="Pending">Pending</option>
-              <option value="Rejected">Rejected</option>
-            </select>
-
-            <select
+              staticOptions={orgVerificationFilterOptions}
+              searchPlaceholder="Search verification…"
+              allowCustom={false}
+              pageSize={8}
+            />
+            <AsyncSearchSelect
+              compact
+              className="min-w-[7rem]"
               value={tierFilter}
-              onChange={(e) => {
-                setTierFilter(e.target.value);
+              onChange={(v) => {
+                setTierFilter(v);
                 setPage(1);
               }}
-              className="text-xs font-medium py-1.5 px-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-            >
-              <option value="all">All Tiers</option>
-              <option value="Gold">Gold</option>
-              <option value="Silver">Silver</option>
-              <option value="Bronze">Bronze</option>
-            </select>
+              staticOptions={orgTierFilterOptions}
+              searchPlaceholder="Search tier…"
+              allowCustom={false}
+              pageSize={8}
+            />
 
             {(statusFilter !== "all" || verificationFilter !== "all" || tierFilter !== "all" || search) && (
               <button
@@ -635,29 +722,36 @@ export default function OrganizationsPage() {
             <span className="hidden sm:inline">Refresh</span>
           </button>
 
-          <button
-            onClick={() => {
-              setOnboardForm({
-                name: "",
-                domain: "",
-                registrationNumber: "",
-                country: "",
-                industry: "",
-                subscriptionTier: "Gold",
-              });
-              setOnboardError(null);
-              setOnboardModalOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700 text-white font-semibold text-xs rounded-lg shadow-xs transition"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Onboard Organization</span>
-          </button>
+          {isAdmin && !isAssessor && (
+            <button
+              onClick={() => {
+                setOnboardForm({
+                  name: "",
+                  domain: "",
+                  registrationNumber: "",
+                  country: "",
+                  industry: "",
+                  subscriptionTier: "Bronze",
+                  contactName: "",
+                  contactEmail: "",
+                  contactPhone: "",
+                  contactPassword: "",
+                });
+                setOnboardLogoFile(null);
+                setOnboardError(null);
+                setOnboardModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-r from-teal-600 to-blue-600 hover:from-teal-700 hover:to-blue-700 text-white font-semibold text-xs rounded-lg shadow-xs transition"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Onboard Organization</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Organizations Content Area: Table + Side Detail Drawer */}
-      <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
+      <div ref={listRef} className="flex-1 min-h-0 flex gap-3 overflow-hidden scroll-mt-4">
         {/* Organizations Data Table - Fixed Header & Scrollable Body */}
         <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs flex flex-col flex-1 min-h-0 overflow-hidden">
           <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0 [scrollbar-width:thin]">
@@ -676,26 +770,7 @@ export default function OrganizationsPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i} className="animate-pulse">
-                    <td className="py-3 px-3 text-center"><div className="h-3 w-5 bg-slate-200 rounded mx-auto" /></td>
-                    <td className="py-3 px-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 rounded-lg bg-slate-200" />
-                        <div className="space-y-1">
-                          <div className="h-3 w-32 bg-slate-200 rounded" />
-                          <div className="h-2.5 w-24 bg-slate-100 rounded" />
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-3"><div className="h-4 w-28 bg-slate-100 rounded" /></td>
-                    <td className="py-3 px-3"><div className="h-4 w-16 bg-slate-100 rounded-full" /></td>
-                    <td className="py-3 px-3"><div className="h-3.5 w-24 bg-slate-100 rounded" /></td>
-                    <td className="py-3 px-3"><div className="h-4 w-14 bg-slate-100 rounded-full" /></td>
-                    <td className="py-3 px-3"><div className="h-3.5 w-16 bg-slate-100 rounded" /></td>
-                    <td className="py-3 px-3 text-right"><div className="h-6 w-6 bg-slate-100 rounded ml-auto" /></td>
-                  </tr>
-                ))
+                <OrganizationsTableSkeleton rows={6} />
               ) : companies.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-14 text-center">
@@ -752,9 +827,14 @@ export default function OrganizationsPage() {
                       {/* Organization Column */}
                       <td className="py-2.5 px-3.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-teal-500 via-cyan-600 to-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0 shadow-2xs">
-                            {c.name.slice(0, 2).toUpperCase()}
-                          </div>
+                          <EntityImage
+                            src={c.logo?.url}
+                            name={c.name}
+                            variant="logo"
+                            size="md"
+                            cacheKey={c.updatedAt || c.logo?.publicId}
+                            className="h-8 w-8 rounded-lg"
+                          />
                           <div>
                             <button
                               type="button"
@@ -783,22 +863,22 @@ export default function OrganizationsPage() {
                           <span>{c.domain}</span>
                         </div>
                         <div className="mt-0.5 pl-4">
-                          {getDnsBadge(c.dnsVerificationStatus)}
+                          {getDnsBadge(c.verificationStatus)}
                         </div>
                       </td>
 
                       {/* Plan Tier */}
                       <td className="py-2.5 px-3">
-                        {getTierBadge(c.subscriptionTier)}
+                        {getTierBadge(c.activePlan)}
                       </td>
 
                       {/* Industry & Country */}
                       <td className="py-2.5 px-3">
                         <div className="text-slate-800 font-medium text-[11px] leading-tight">
-                          {c.industry || "General Industry"}
+                          {c.industry || "—"}
                         </div>
                         <div className="text-[10px] text-slate-400 leading-tight mt-0.5">
-                          {c.country || "Global"}
+                          {c.country || "—"}
                         </div>
                       </td>
 
@@ -841,37 +921,43 @@ export default function OrganizationsPage() {
                                   <ExternalLink className="h-3 w-3 text-slate-400" />
                                   View Profile
                                 </button>
-                                <button
-                                  onClick={() => handleVerifyDns(c)}
-                                  className="w-full text-left px-3 py-1.5 text-teal-700 hover:bg-teal-50 flex items-center gap-2 font-medium"
-                                >
-                                  <ShieldCheck className="h-3 w-3 text-teal-600" />
-                                  Verify DNS Now
-                                </button>
+                                {isSuperAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleVerifyDns(c)}
+                                    className="w-full text-left px-3 py-1.5 text-teal-700 hover:bg-teal-50 flex items-center gap-2 font-medium"
+                                  >
+                                    <ShieldCheck className="h-3 w-3 text-teal-600" />
+                                    Verify DNS Now
+                                  </button>
+                                )}
                               </div>
 
-                              <div className="py-0.5">
-                                <button
-                                  onClick={() => handleToggleStatus(c)}
-                                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 font-medium ${
-                                    c.status === "Active"
-                                      ? "text-rose-600 hover:bg-rose-50"
-                                      : "text-emerald-600 hover:bg-emerald-50"
-                                  }`}
-                                >
-                                  {c.status === "Active" ? (
-                                    <>
-                                      <XCircle className="h-3 w-3 text-rose-500" />
-                                      Suspend Account
-                                    </>
-                                  ) : (
-                                    <>
-                                      <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-                                      Activate Account
-                                    </>
-                                  )}
-                                </button>
-                              </div>
+                              {isSuperAdmin && (
+                                <div className="py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleStatus(c)}
+                                    className={`w-full text-left px-3 py-1.5 flex items-center gap-2 font-medium ${
+                                      c.status === "Active"
+                                        ? "text-rose-600 hover:bg-rose-50"
+                                        : "text-emerald-600 hover:bg-emerald-50"
+                                    }`}
+                                  >
+                                    {c.status === "Active" ? (
+                                      <>
+                                        <XCircle className="h-3 w-3 text-rose-500" />
+                                        Suspend Account
+                                      </>
+                                    ) : (
+                                      <>
+                                        <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                        Activate Account
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -903,19 +989,19 @@ export default function OrganizationsPage() {
             {/* Rows Per Page Selector */}
             <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
               <span className="text-[11px] text-slate-500">Rows:</span>
-              <select
-                value={limit}
-                onChange={(e) => {
-                  const newLimit = Number(e.target.value);
-                  setLimit(newLimit);
+              <AsyncSearchSelect
+                compact
+                className="w-28"
+                value={String(limit)}
+                onChange={(v) => {
+                  setLimit(Number(v));
                   setPage(1);
                 }}
-                className="py-0.5 px-2 text-xs font-semibold bg-white border border-slate-300 rounded-md text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer"
-              >
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
+                loadOptions={loadPageSizeOptions}
+                searchPlaceholder="Rows per page…"
+                allowCustom={false}
+                pageSize={8}
+              />
             </div>
           </div>
 
@@ -962,9 +1048,9 @@ export default function OrganizationsPage() {
       {/* MODAL: ONBOARD NEW ORGANIZATION                                */}
       {/* ============================================================== */}
       {onboardModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[min(90vh,820px)] flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="h-8 w-8 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center">
                   <Building2 className="h-4 w-4" />
@@ -984,7 +1070,31 @@ export default function OrganizationsPage() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmitOnboard} className="p-5 space-y-3.5">
+            <form
+              onSubmit={handleSubmitOnboard}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  e.target instanceof HTMLElement &&
+                  e.target.tagName === "INPUT" &&
+                  (e.target as HTMLInputElement).type !== "submit"
+                ) {
+                  e.preventDefault();
+                }
+              }}
+              className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-4"
+            >
+              {onboardTenantId && activeTenant && (
+                <p className="text-[11px] text-teal-900 bg-teal-50 border border-teal-200 rounded-lg px-2.5 py-2">
+                  This organization will be linked to workspace{" "}
+                  <span className="font-semibold">{activeTenant.name}</span>.
+                </p>
+              )}
+              {isSuperAdmin && platformMode && !onboardTenantId && (
+                <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                  Pick a tenant in the header switcher before onboarding (Platform mode does not attach a tenant).
+                </p>
+              )}
               {onboardError && (
                 <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center gap-2">
                   <AlertCircle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
@@ -992,95 +1102,174 @@ export default function OrganizationsPage() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Organization Legal Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={onboardForm.name}
-                  onChange={(e) => setOnboardForm({ ...onboardForm, name: e.target.value })}
-                  placeholder="e.g. Acme AI Global Corp"
-                  className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-                />
-              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-5">
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Organization legal name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={onboardForm.name}
+                      onChange={(e) => setOnboardForm({ ...onboardForm, name: e.target.value })}
+                      placeholder={fieldPlaceholder.organizationName}
+                      className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Primary Domain * (DNS Verified)
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={onboardForm.domain}
-                  onChange={(e) => setOnboardForm({ ...onboardForm, domain: e.target.value })}
-                  placeholder="e.g. acme-ai.com"
-                  className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-                />
-              </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Primary domain * (DNS verified)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={onboardForm.domain}
+                      onChange={(e) => setOnboardForm({ ...onboardForm, domain: e.target.value })}
+                      placeholder={fieldPlaceholder.domain}
+                      className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Website domain only — not an email address (no{" "}
+                      <span className="font-mono text-slate-700">@</span>).
+                    </p>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Industry
-                  </label>
-                  <input
-                    type="text"
-                    value={onboardForm.industry}
-                    onChange={(e) => setOnboardForm({ ...onboardForm, industry: e.target.value })}
-                    placeholder="e.g. FinTech / Healthcare"
-                    className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <AsyncSearchSelect
+                        label="Industry"
+                        value={onboardForm.industry}
+                        onChange={(industry) => setOnboardForm({ ...onboardForm, industry })}
+                        placeholder={fieldPlaceholder.selectIndustry}
+                        searchPlaceholder="Search industries…"
+                        loadOptions={loadIndustryOptions}
+                        pageSize={8}
+                      />
+                    </div>
+                    <AsyncSearchSelect
+                      label="Subscription tier"
+                      value={onboardForm.subscriptionTier}
+                      onChange={(subscriptionTier) =>
+                        setOnboardForm({
+                          ...onboardForm,
+                          subscriptionTier: subscriptionTier as SubscriptionTier,
+                        })
+                      }
+                      placeholder="Select tier"
+                      loadOptions={loadSubscriptionTierOptions}
+                      searchPlaceholder="Search tiers…"
+                      allowCustom={false}
+                      pageSize={8}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Registration / tax ID
+                      </label>
+                      <input
+                        type="text"
+                        value={onboardForm.registrationNumber}
+                        onChange={(e) =>
+                          setOnboardForm({ ...onboardForm, registrationNumber: e.target.value })
+                        }
+                        placeholder={fieldPlaceholder.registrationId}
+                        className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+                      />
+                    </div>
+                    <div>
+                      <AsyncSearchSelect
+                        label="Jurisdiction country"
+                        value={onboardForm.country}
+                        onChange={(country) => setOnboardForm({ ...onboardForm, country })}
+                        placeholder={fieldPlaceholder.selectCountry}
+                        searchPlaceholder="Search countries…"
+                        loadOptions={loadCountryOptions}
+                        pageSize={8}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <ImageUploader
+                    variant="logo"
+                    label="Organization logo (optional)"
+                    name={onboardForm.name || "Organization"}
+                    stagedOnly
+                    autoUpload={false}
+                    onUpload={async () => undefined}
+                    onStageChange={(file) => setOnboardLogoFile(file)}
+                    hint="JPEG, PNG, or WebP · max 5 MB · uploads after create"
                   />
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Subscription Tier
-                  </label>
-                  <select
-                    value={onboardForm.subscriptionTier}
-                    onChange={(e) =>
-                      setOnboardForm({ ...onboardForm, subscriptionTier: e.target.value as SubscriptionTier })
-                    }
-                    className="w-full text-xs py-2 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition cursor-pointer"
-                  >
-                    <option value="Gold">Gold Enterprise</option>
-                    <option value="Silver">Silver Scale</option>
-                    <option value="Bronze">Bronze Starter</option>
-                  </select>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2.5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Primary contact (profile)
+                    </p>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">Name</label>
+                      <input
+                        type="text"
+                        value={onboardForm.contactName}
+                        onChange={(e) => setOnboardForm({ ...onboardForm, contactName: e.target.value })}
+                        placeholder={fieldPlaceholder.name}
+                        className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Email ID</label>
+                        <input
+                          type="email"
+                          value={onboardForm.contactEmail}
+                          onChange={(e) =>
+                            setOnboardForm({ ...onboardForm, contactEmail: e.target.value })
+                          }
+                          placeholder={fieldPlaceholder.email}
+                          className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                        />
+                      </div>
+                      <div>
+                        <PhoneInput
+                          label="Phone number"
+                          value={onboardForm.contactPhone}
+                          onChange={(contactPhone) =>
+                            setOnboardForm({ ...onboardForm, contactPhone })
+                          }
+                          linkedCountryName={onboardForm.country}
+                          placeholder={fieldPlaceholder.phone}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {isSuperAdmin && (
+                    <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-3 space-y-2">
+                      <p className="text-[10px] font-bold text-teal-800 uppercase tracking-wider">
+                        Assessor login (Super Admin only)
+                      </p>
+                      <p className="text-[11px] text-teal-900/80">
+                        Optional. When email is provided, a linked Assessor account is created for this organization.
+                      </p>
+                      <PasswordInput
+                        label="Initial password (optional, min. 8 if set)"
+                        value={onboardForm.contactPassword}
+                        onChange={(contactPassword) =>
+                          setOnboardForm({ ...onboardForm, contactPassword })
+                        }
+                        showStrength
+                        showRequirementsInfo
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Registration / Tax ID
-                  </label>
-                  <input
-                    type="text"
-                    value={onboardForm.registrationNumber}
-                    onChange={(e) => setOnboardForm({ ...onboardForm, registrationNumber: e.target.value })}
-                    placeholder="e.g. REG-2026-8819"
-                    className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Jurisdiction Country
-                  </label>
-                  <input
-                    type="text"
-                    value={onboardForm.country}
-                    onChange={(e) => setOnboardForm({ ...onboardForm, country: e.target.value })}
-                    placeholder="e.g. United States / India"
-                    className="w-full text-xs py-2 px-3 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={() => setOnboardModalOpen(false)}

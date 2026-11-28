@@ -388,7 +388,7 @@ function installInMemoryMongooseAdapter() {
 emailService.sendUserInvitation = async () => true as any;
 emailService.sendAdminNewCompanyAlert = async () => true as any;
 emailService.sendAdminDomainAlert = async () => true as any;
-emailService.sendPasswordResetEmail = async () => true as any;
+emailService.sendPasswordReset = async () => true as any;
 
 // ============================================================================
 // Test Runner Helper

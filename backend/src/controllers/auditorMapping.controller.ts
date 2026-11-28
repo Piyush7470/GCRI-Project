@@ -5,9 +5,25 @@ import { Company } from "../models/Company.js";
 import { User } from "../models/User.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { sendSuccess, sendError } from "../utils/response.js";
+import {
+  getAssignedOrganizationIds,
+  isAuditorAssignedToOrg,
+} from "../middlewares/companyScope.js";
+import { isAuditorRole, isTenantAdminRole } from "../middlewares/auth.js";
+
+async function resolveTenantOrgIds(req: Request): Promise<Types.ObjectId[]> {
+  if (!req.user?.userId) return [];
+  return getAssignedOrganizationIds(req.user.userId, req.user.tenantId);
+}
+
+async function assertOrgInTenant(req: Request, organizationId: string): Promise<boolean> {
+  if (!isTenantAdminRole(req.user?.role)) return false;
+  const allowed = await resolveTenantOrgIds(req);
+  return allowed.some((id) => id.toString() === organizationId.toString());
+}
 
 /**
- * Assign an Auditor to an Organization
+ * Assign an Auditor to an Organization (Tenant Admin module)
  * POST /api/v1/admin/auditor-mappings
  */
 export async function assignAuditor(req: Request, res: Response, next: NextFunction) {
@@ -16,41 +32,54 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
     const adminId = req.user?.userId;
     const adminEmail = req.user?.email || "unknown";
 
-    // 1. Verify organization exists
     const organization = await Company.findById(organizationId);
     if (!organization) {
       return sendError(res, "Organization not found", 404, "ORGANIZATION_NOT_FOUND");
     }
 
-    // Tenant check: TenantAdmin cannot map auditors to other tenants' organizations
-    if (
-      req.user?.role === "TenantAdmin" &&
-      organization.tenantId &&
-      req.user.tenantId !== organization.tenantId.toString()
-    ) {
+    if (organization.status === "Suspended") {
       return sendError(
         res,
-        "Access denied. You can only assign auditors to organizations in your own tenant.",
+        `Organization "${organization.name}" is suspended. New assessor assignments are not allowed until it is reactivated.`,
         403,
-        "CROSS_COMPANY_ACCESS_DENIED"
+        "ORGANIZATION_SUSPENDED"
       );
     }
 
-    // 2. Verify auditor exists and has Auditor role
-    const auditor = await User.findById(auditorId);
-    if (!auditor) {
-      return sendError(res, "Auditor user not found", 404, "AUDITOR_NOT_FOUND");
-    }
-    if (auditor.role !== "Auditor") {
+    if (!(await assertOrgInTenant(req, organizationId.toString()))) {
       return sendError(
         res,
-        `User ${auditor.email} does not have the Auditor role.`,
+        "Access denied. You can only assign assessors to client organizations in your tenant.",
+        403,
+        "CROSS_TENANT_ACCESS_DENIED"
+      );
+    }
+
+    const auditor = await User.findById(auditorId);
+    if (!auditor) {
+      return sendError(res, "Assessor user not found", 404, "AUDITOR_NOT_FOUND");
+    }
+    if (!isAuditorRole(auditor.role) && auditor.role !== "Assessor") {
+      return sendError(
+        res,
+        `User ${auditor.email} does not have the Assessor role.`,
         400,
         "INVALID_AUDITOR_ROLE"
       );
     }
 
-    // 3. Check for existing mapping
+    // Auditor must belong to the same tenant when tenanted
+    if (req.user?.tenantId && auditor.tenantId) {
+      if (auditor.tenantId.toString() !== req.user.tenantId.toString()) {
+        return sendError(
+          res,
+          "Access denied. Assessor is outside your tenant workspace.",
+          403,
+          "CROSS_TENANT_ACCESS_DENIED"
+        );
+      }
+    }
+
     let mapping = await AuditorOrganization.findOne({
       organizationId: new Types.ObjectId(organizationId),
       auditorId: new Types.ObjectId(auditorId),
@@ -60,12 +89,11 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
       if (mapping.status === "Active") {
         return sendError(
           res,
-          "Auditor is already actively mapped to this organization.",
+          "Assessor is already actively mapped to this client organization.",
           409,
           "AUDITOR_MAPPING_ALREADY_EXISTS"
         );
       }
-      // Reactivate inactive mapping
       mapping.status = "Active";
       mapping.assignedBy = new Types.ObjectId(adminId);
       await mapping.save();
@@ -78,7 +106,6 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
       });
     }
 
-    // 4. Record audit log
     await AuditLog.create({
       actorId: adminId,
       actorEmail: adminEmail,
@@ -103,7 +130,7 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
 
     return sendSuccess(
       res,
-      { mapping: populated, message: "Auditor successfully assigned to organization." },
+      { mapping: populated, message: "Assessor successfully assigned to client organization." },
       201
     );
   } catch (err) {
@@ -112,7 +139,7 @@ export async function assignAuditor(req: Request, res: Response, next: NextFunct
 }
 
 /**
- * List all auditor-organization mappings platform-wide
+ * List auditor-organization mappings for the active tenant
  * GET /api/v1/admin/auditor-mappings
  */
 export async function getAuditorMappings(req: Request, res: Response, next: NextFunction) {
@@ -123,18 +150,30 @@ export async function getAuditorMappings(req: Request, res: Response, next: Next
     if (status && status !== "All") {
       filter.status = status;
     }
-    if (req.user?.role === "TenantAdmin") {
-      if (req.user.tenantId) {
-        const tenantOrgs = await Company.find({ tenantId: req.user.tenantId }).select("_id");
-        filter.organizationId = { $in: tenantOrgs.map((c) => c._id) };
-      } else if (req.user.companyId) {
-        filter.organizationId = new Types.ObjectId(req.user.companyId);
-      } else {
-        return sendSuccess(res, { mappings: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
-      }
-    } else if (organizationId) {
-      filter.organizationId = new Types.ObjectId(organizationId as string);
+
+    const allowedOrgIds = await resolveTenantOrgIds(req);
+    if (allowedOrgIds.length === 0) {
+      return sendSuccess(res, {
+        mappings: [],
+        pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+      });
     }
+
+    if (organizationId) {
+      const requested = String(organizationId);
+      if (!allowedOrgIds.some((id) => id.toString() === requested)) {
+        return sendError(
+          res,
+          "Access denied. Organization is outside your tenant scope.",
+          403,
+          "CROSS_TENANT_ACCESS_DENIED"
+        );
+      }
+      filter.organizationId = new Types.ObjectId(requested);
+    } else {
+      filter.organizationId = { $in: allowedOrgIds };
+    }
+
     if (auditorId) {
       filter.auditorId = new Types.ObjectId(auditorId as string);
     }
@@ -176,6 +215,31 @@ export async function getAuditorsForOrganization(req: Request, res: Response, ne
   try {
     const { organizationId } = req.params;
 
+    if (isTenantAdminRole(req.user?.role)) {
+      if (!(await assertOrgInTenant(req, organizationId))) {
+        return sendError(
+          res,
+          "Access denied. Organization is outside your tenant scope.",
+          403,
+          "CROSS_TENANT_ACCESS_DENIED"
+        );
+      }
+    } else if (isAuditorRole(req.user?.role)) {
+      const allowed = await isAuditorAssignedToOrg(
+        req.user!.userId,
+        organizationId,
+        req.user?.tenantId
+      );
+      if (!allowed) {
+        return sendError(
+          res,
+          "Access denied. You are not assigned to this organization.",
+          403,
+          "CROSS_COMPANY_ACCESS_DENIED"
+        );
+      }
+    }
+
     const mappings = await AuditorOrganization.find({
       organizationId: new Types.ObjectId(organizationId),
       status: "Active",
@@ -207,20 +271,29 @@ export async function getOrganizationsForAuditor(req: Request, res: Response, ne
   try {
     const { auditorId } = req.params;
 
-    // Auditors can only query their own assignments unless they are TenantAdmin/SuperAdmin
-    if (req.user?.role !== "TenantAdmin" && req.user?.role !== "SuperAdmin" && req.user?.userId !== auditorId) {
+    if (
+      !isTenantAdminRole(req.user?.role) &&
+      req.user?.userId !== auditorId
+    ) {
       return sendError(
         res,
-        "You do not have permission to view assignments for another auditor.",
+        "You do not have permission to view assignments for another assessor.",
         403,
         "CROSS_AUDITOR_ACCESS_DENIED"
       );
     }
 
-    const mappings = await AuditorOrganization.find({
+    const filter: Record<string, any> = {
       auditorId: new Types.ObjectId(auditorId),
       status: "Active",
-    })
+    };
+
+    if (isTenantAdminRole(req.user?.role)) {
+      const allowedOrgIds = await resolveTenantOrgIds(req);
+      filter.organizationId = { $in: allowedOrgIds };
+    }
+
+    const mappings = await AuditorOrganization.find(filter)
       .populate("organizationId", "name domain verificationStatus status industry country")
       .sort({ createdAt: -1 });
 
@@ -250,20 +323,16 @@ export async function removeAuditorMapping(req: Request, res: Response, next: Ne
 
     const mapping = await AuditorOrganization.findById(id);
     if (!mapping) {
-      return sendError(res, "Auditor mapping not found", 404, "MAPPING_NOT_FOUND");
+      return sendError(res, "Assessor mapping not found", 404, "MAPPING_NOT_FOUND");
     }
 
-    // Tenant check: TenantAdmin can only unassign from own tenant's organizations
-    if (req.user?.role === "TenantAdmin") {
-      const org = await Company.findById(mapping.organizationId);
-      if (org?.tenantId && org.tenantId.toString() !== req.user.tenantId) {
-        return sendError(
-          res,
-          "Access denied. You can only unassign auditors from organizations in your own tenant.",
-          403,
-          "CROSS_COMPANY_ACCESS_DENIED"
-        );
-      }
+    if (!(await assertOrgInTenant(req, mapping.organizationId.toString()))) {
+      return sendError(
+        res,
+        "Access denied. You can only unassign assessors from client organizations in your tenant.",
+        403,
+        "CROSS_TENANT_ACCESS_DENIED"
+      );
     }
 
     mapping.status = "Inactive";
@@ -290,8 +359,7 @@ export async function removeAuditorMapping(req: Request, res: Response, next: Ne
 
     return sendSuccess(
       res,
-      { mappingId: id, status: "Inactive", message: "Auditor successfully unassigned from organization." },
-      200
+      { message: "Assessor successfully unassigned from client organization.", mappingId: id }
     );
   } catch (err) {
     next(err);

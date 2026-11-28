@@ -1,4 +1,8 @@
 import nodemailer, { Transporter } from "nodemailer";
+import {
+  formatDurationFromHours,
+  formatDurationFromMinutes,
+} from "../utils/formatDuration.js";
 
 export interface SendEmailOptions {
   to: string | string[];
@@ -7,75 +11,124 @@ export interface SendEmailOptions {
   text?: string;
 }
 
-class TransactionalEmailService {
-  private transporter: Transporter | null = null;
-  private fromAddress: string;
-  private isConfigured = false;
+function appBaseUrl(): string {
+  const raw =
+    process.env.CLIENT_BASE_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:3000");
 
-  constructor() {
-    this.fromAddress = process.env.EMAIL_FROM || "GRAICE Platform <no-reply@graice.ai>";
-    this.initTransporter();
+  if (!raw?.trim()) {
+    console.warn(
+      "[EmailService] CLIENT_BASE_URL (or FRONTEND_URL / APP_URL) is not set. Email buttons will not point at your deployed frontend."
+    );
+    return "http://localhost:3000";
   }
 
-  private initTransporter() {
-    if (
-      process.env.SMTP_HOST &&
-      process.env.SMTP_PORT &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS
-    ) {
+  return raw.replace(/\/$/, "");
+}
+
+function fromAddress(): string {
+  return (
+    process.env.SMTP_FROM ||
+    process.env.EMAIL_FROM ||
+    "GRAICE Platform <no-reply@graice.ai>"
+  );
+}
+
+class TransactionalEmailService {
+  private transporter: Transporter | null = null;
+  private initialized = false;
+  private isConfigured = false;
+
+  /** Lazy init so dotenv has loaded before we read SMTP_* vars. */
+  private ensureTransporter() {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    const host = process.env.SMTP_HOST?.trim();
+    const port = Number(process.env.SMTP_PORT) || 587;
+    const user = process.env.SMTP_USER?.trim();
+    const pass = process.env.SMTP_PASS?.trim();
+
+    if (host && user && pass) {
+      const secure =
+        process.env.SMTP_SECURE === "true" || port === 465;
+
       this.transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === "true",
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
+        host,
+        port,
+        secure,
+        auth: { user, pass },
+        // Gmail on 587 uses STARTTLS
+        requireTLS: !secure && port === 587,
       });
       this.isConfigured = true;
-      console.log(`[EmailService] SMTP transporter configured for host: ${process.env.SMTP_HOST}`);
+      const appName = process.env.SMTP_APP_NAME?.trim() || "Mail";
+      console.log(
+        `[EmailService] SMTP configured → ${host}:${port} as ${user} (app: ${appName}, from: ${fromAddress()})`
+      );
+      console.log(`[EmailService] Email link base (frontend): ${appBaseUrl()}`);
     } else {
+      this.isConfigured = false;
       console.warn(
-        "[EmailService] SMTP credentials not fully configured. Operating in development mock/console mode."
+        "[EmailService] SMTP credentials incomplete (need SMTP_HOST, SMTP_USER, SMTP_PASS). Emails will be logged to console only."
       );
     }
+  }
+
+  public isReady(): boolean {
+    this.ensureTransporter();
+    return this.isConfigured;
+  }
+
+  public getAppBaseUrl(): string {
+    return appBaseUrl();
   }
 
   /**
    * Base method to send an email with standard HTML envelope
    */
-  public async sendEmail(options: SendEmailOptions): Promise<{ success: boolean; messageId?: string }> {
+  public async sendEmail(
+    options: SendEmailOptions
+  ): Promise<{ success: boolean; messageId?: string; mocked?: boolean }> {
+    this.ensureTransporter();
     const recipients = Array.isArray(options.to) ? options.to.join(", ") : options.to;
 
     if (this.isConfigured && this.transporter) {
       try {
         const info = await this.transporter.sendMail({
-          from: this.fromAddress,
+          from: fromAddress(),
           to: recipients,
           subject: options.subject,
           html: options.html,
           text: options.text,
         });
-        console.log(`[EmailService] Email sent successfully to ${recipients}. MessageId: ${info.messageId}`);
+        console.log(
+          `[EmailService] Email sent to ${recipients}. MessageId: ${info.messageId}`
+        );
         return { success: true, messageId: info.messageId };
       } catch (err) {
         console.error(`[EmailService] Failed to send email to ${recipients}:`, err);
         return { success: false };
       }
-    } else {
-      // In development or test, log email payload safely
-      console.log(`[EmailService/DevMock] To: ${recipients}`);
-      console.log(`[EmailService/DevMock] Subject: ${options.subject}`);
-      console.log(`[EmailService/DevMock] Preview: ${options.text || options.subject}`);
-      return { success: true, messageId: `mock-${Date.now()}` };
     }
+
+    console.log(`[EmailService/DevMock] To: ${recipients}`);
+    console.log(`[EmailService/DevMock] Subject: ${options.subject}`);
+    console.log(`[EmailService/DevMock] Preview: ${options.text || options.subject}`);
+    return { success: true, messageId: `mock-${Date.now()}`, mocked: true };
   }
 
   /**
    * Generates a modern branded HTML email layout for GRAICE
    */
-  private renderBaseTemplate(title: string, bodyContent: string, actionButton?: { text: string; url: string }): string {
+  private renderBaseTemplate(
+    title: string,
+    bodyContent: string,
+    actionButton?: { text: string; url: string }
+  ): string {
     const buttonHtml = actionButton
       ? `
         <div style="margin: 32px 0 24px 0; text-align: center;">
@@ -100,14 +153,12 @@ class TransactionalEmailService {
       </head>
       <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F8FAFC; margin: 0; padding: 40px 16px; color: #0F172A;">
         <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-          <!-- Header -->
           <tr>
             <td style="background-color: #0F172A; padding: 28px 32px; text-align: center;">
               <span style="font-size: 20px; font-weight: 800; color: #FFFFFF; letter-spacing: 1.5px;">GRAICE</span>
               <span style="font-size: 13px; font-weight: 400; color: #94A3B8; margin-left: 8px; text-transform: uppercase; letter-spacing: 1px;">Assessment Platform</span>
             </td>
           </tr>
-          <!-- Content -->
           <tr>
             <td style="padding: 36px 32px 24px 32px;">
               <h2 style="font-size: 20px; font-weight: 700; color: #0F172A; margin: 0 0 16px 0;">${title}</h2>
@@ -117,7 +168,6 @@ class TransactionalEmailService {
               ${buttonHtml}
             </td>
           </tr>
-          <!-- Footer -->
           <tr>
             <td style="background-color: #F1F5F9; padding: 20px 32px; border-top: 1px solid #E2E8F0; text-align: center; font-size: 12px; color: #64748B;">
               <p style="margin: 0 0 4px 0;">This is an automated operational notification from the GRAICE Assessment Platform.</p>
@@ -130,9 +180,6 @@ class TransactionalEmailService {
     `;
   }
 
-  /**
-   * Template 1: User Invitation Email
-   */
   public async sendUserInvitation(params: {
     recipientEmail: string;
     recipientName: string;
@@ -141,40 +188,38 @@ class TransactionalEmailService {
     invitationUrl: string;
     expiresInHours?: number;
   }) {
-    const orgText = params.organizationName ? ` at <strong>${params.organizationName}</strong>` : "";
-    const hours = params.expiresInHours || 48;
+    const orgText = params.organizationName
+      ? ` at <strong>${params.organizationName}</strong>`
+      : "";
+    const expiryLabel = formatDurationFromHours(params.expiresInHours || 48);
 
     const content = `
       <p>Hello ${params.recipientName},</p>
       <p>You have been invited to join the <strong>GRAICE Assessment Platform</strong> as an <strong>${params.role}</strong>${orgText}.</p>
       <p>The GRAICE Platform provides authoritative responsible AI governance evaluations aligned with EU AI Act, NIST AI RMF, and ISO 42001.</p>
-      <p>Please click the button below to set your password and activate your account. This invitation link will expire in <strong>${hours} hours</strong>.</p>
+      <p>Please click the button below to set your password and activate your account. This invitation link will expire in <strong>${expiryLabel}</strong>.</p>
     `;
 
     return this.sendEmail({
       to: params.recipientEmail,
       subject: `Invitation to join GRAICE Assessment Platform`,
-      html: this.renderBaseTemplate(
-        "Welcome to the GRAICE Platform",
-        content,
-        { text: "Accept Invitation & Set Password", url: params.invitationUrl }
-      ),
+      html: this.renderBaseTemplate("Welcome to the GRAICE Platform", content, {
+        text: "Accept Invitation & Set Password",
+        url: params.invitationUrl,
+      }),
       text: `Hello ${params.recipientName}, you have been invited to join GRAICE as an ${params.role}. Open this link to accept: ${params.invitationUrl}`,
     });
   }
 
-  /**
-   * Template 2: Password Reset Email
-   */
   public async sendPasswordReset(params: {
     recipientEmail: string;
     resetUrl: string;
     expiresInMinutes?: number;
   }) {
-    const minutes = params.expiresInMinutes || 60;
+    const expiryLabel = formatDurationFromMinutes(params.expiresInMinutes || 60);
     const content = `
       <p>We received a request to reset the password for your GRAICE Assessment Platform account.</p>
-      <p>Click the button below to choose a new password. For security, this link is single-use and will expire in <strong>${minutes} minutes</strong>.</p>
+      <p>Click the button below to choose a new password. For security, this link is single-use and will expire in <strong>${expiryLabel}</strong>.</p>
       <p style="margin-top: 20px; padding: 12px; background-color: #FEF3C7; border-left: 4px solid #F59E0B; font-size: 13px; color: #92400E; border-radius: 4px;">
         <strong>Security Notice:</strong> If you did not request a password reset, please ignore this email or contact your administrator immediately.
       </p>
@@ -183,18 +228,14 @@ class TransactionalEmailService {
     return this.sendEmail({
       to: params.recipientEmail,
       subject: "GRAICE Platform — Password Reset Request",
-      html: this.renderBaseTemplate(
-        "Reset Your Password",
-        content,
-        { text: "Reset Password", url: params.resetUrl }
-      ),
+      html: this.renderBaseTemplate("Reset Your Password", content, {
+        text: "Reset Password",
+        url: params.resetUrl,
+      }),
       text: `A password reset was requested for your GRAICE account. Open this link: ${params.resetUrl}`,
     });
   }
 
-  /**
-   * Template 3: MFA Security Alert
-   */
   public async sendMfaAlert(params: {
     recipientEmail: string;
     action: "ENABLED" | "RECOVERY_CODES_REGENERATED";
@@ -219,9 +260,6 @@ class TransactionalEmailService {
     });
   }
 
-  /**
-   * Template 4: Admin Notification — New Company Onboarded
-   */
   public async sendAdminNewCompanyAlert(params: {
     adminEmails: string[];
     companyName: string;
@@ -239,17 +277,19 @@ class TransactionalEmailService {
       </table>
     `;
 
+    const dashboardUrl = `${appBaseUrl()}/organizations`;
+
     return this.sendEmail({
       to: params.adminEmails,
       subject: `[Admin Alert] New Organization Onboarded: ${params.companyName}`,
-      html: this.renderBaseTemplate("New Organization Onboarded", content),
-      text: `New company ${params.companyName} (${params.domain}) onboarded by ${params.actorEmail}. Status: ${params.verificationStatus}`,
+      html: this.renderBaseTemplate("New Organization Onboarded", content, {
+        text: "Open Organizations",
+        url: dashboardUrl,
+      }),
+      text: `New company ${params.companyName} (${params.domain}) onboarded by ${params.actorEmail}. Status: ${params.verificationStatus}. Review: ${dashboardUrl}`,
     });
   }
 
-  /**
-   * Template 5: Admin Notification — Domain Verification Failure
-   */
   public async sendAdminDomainAlert(params: {
     adminEmails: string[];
     companyName: string;
@@ -265,17 +305,19 @@ class TransactionalEmailService {
       <p>Please log in to the Administrative Dashboard to review the organization profile and apply a manual verification override if appropriate.</p>
     `;
 
+    const dashboardUrl = `${appBaseUrl()}/organizations`;
+
     return this.sendEmail({
       to: params.adminEmails,
       subject: `[Admin Action Required] Domain Verification Pending: ${params.companyName}`,
-      html: this.renderBaseTemplate("Domain Verification Review Required", content),
-      text: `Domain verification failed for ${params.companyName} (${params.domain}). Reason: ${params.reason}`,
+      html: this.renderBaseTemplate("Domain Verification Review Required", content, {
+        text: "Review Organization",
+        url: dashboardUrl,
+      }),
+      text: `Domain verification failed for ${params.companyName} (${params.domain}). Reason: ${params.reason}. Review: ${dashboardUrl}`,
     });
   }
 
-  /**
-   * Template 6: Assessment Assigned / Resumption Reminder
-   */
   public async sendAssessmentReminder(params: {
     recipientEmail: string;
     assessmentId: string;
@@ -284,7 +326,9 @@ class TransactionalEmailService {
     dueDate?: Date;
     deepLinkUrl: string;
   }) {
-    const dueText = params.dueDate ? `<p><strong>Target Due Date:</strong> ${params.dueDate.toLocaleDateString()}</p>` : "";
+    const dueText = params.dueDate
+      ? `<p><strong>Target Due Date:</strong> ${params.dueDate.toLocaleDateString()}</p>`
+      : "";
     const content = `
       <p>This is a reminder regarding the in-progress Responsible AI Governance Assessment for <strong>${params.companyName}</strong>.</p>
       <p><strong>Framework:</strong> ${params.frameworkTitle}</p>
@@ -295,18 +339,14 @@ class TransactionalEmailService {
     return this.sendEmail({
       to: params.recipientEmail,
       subject: `Assessment Reminder: ${params.companyName} — GRAICE Platform`,
-      html: this.renderBaseTemplate(
-        "Responsible AI Assessment In Progress",
-        content,
-        { text: "Resume Assessment", url: params.deepLinkUrl }
-      ),
+      html: this.renderBaseTemplate("Responsible AI Assessment In Progress", content, {
+        text: "Resume Assessment",
+        url: params.deepLinkUrl,
+      }),
       text: `Assessment reminder for ${params.companyName}. Resume here: ${params.deepLinkUrl}`,
     });
   }
 
-  /**
-   * Template 7: Assessment Completed & Executive Report Available
-   */
   public async sendAssessmentCompleted(params: {
     recipientEmail: string;
     companyName: string;
@@ -314,6 +354,7 @@ class TransactionalEmailService {
     score: number;
     maturityLevel: string;
     reportDownloadUrl?: string;
+    viewResultsUrl?: string;
   }) {
     const content = `
       <p>The Responsible AI Governance assessment for <strong>${params.companyName}</strong> has been finalized and submitted.</p>
@@ -327,7 +368,9 @@ class TransactionalEmailService {
 
     const button = params.reportDownloadUrl
       ? { text: "Download Executive PDF Report", url: params.reportDownloadUrl }
-      : undefined;
+      : params.viewResultsUrl
+        ? { text: "Open Assessment Results", url: params.viewResultsUrl }
+        : undefined;
 
     return this.sendEmail({
       to: params.recipientEmail,

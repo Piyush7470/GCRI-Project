@@ -22,8 +22,8 @@ export async function registerWebhook(req: Request, res: Response, next: NextFun
       return sendError(res, "Company ID is required", 400, "COMPANY_ID_REQUIRED");
     }
 
-    if (req.user?.role !== "TenantAdmin") {
-      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, companyId, req.user?.tenantId);
+    if (req.user?.role !== "Admin") {
+      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, companyId);
       if (!isAssigned) {
         return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
       }
@@ -32,7 +32,6 @@ export async function registerWebhook(req: Request, res: Response, next: NextFun
     const secret = `whsec_${crypto.randomBytes(24).toString("hex")}`;
 
     const webhook = await WebhookSubscription.create({
-      tenantId: req.user?.tenantId,
       companyId,
       url,
       secret,
@@ -42,7 +41,6 @@ export async function registerWebhook(req: Request, res: Response, next: NextFun
     });
 
     await AuditLog.create({
-      tenantId: req.user?.tenantId,
       actorId: req.user!.userId,
       actorEmail: req.user!.email,
       action: "WEBHOOK_REGISTERED",
@@ -109,8 +107,8 @@ export async function deleteWebhook(req: Request, res: Response, next: NextFunct
       return sendError(res, "Webhook subscription not found", 404, "WEBHOOK_NOT_FOUND");
     }
 
-    if (req.user?.role !== "TenantAdmin") {
-      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, webhook.companyId.toString(), req.user?.tenantId);
+    if (req.user?.role !== "Admin") {
+      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, webhook.companyId.toString());
       if (!isAssigned) {
         return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
       }

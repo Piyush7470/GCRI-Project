@@ -4,18 +4,31 @@ export type CompanyStatus = "Active" | "Suspended";
 export type VerificationStatus = "Verified" | "Pending" | "Rejected";
 export type SubscriptionTier = "Bronze" | "Silver" | "Gold";
 
+export interface ICompanyImageAsset {
+  url: string;
+  publicId: string;
+}
+
+export interface ICompanyPrimaryContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface ICompany extends Document {
-  tenantId: Types.ObjectId;
   name: string;
   domain: string;
   registrationNumber?: string;
   country?: string;
   industry?: string;
   size?: string;
+  primaryContact?: ICompanyPrimaryContact;
+  tenantId?: Types.ObjectId;
   activePlan?: SubscriptionTier;
   verificationStatus: VerificationStatus;
   status: CompanyStatus;
-  createdBy?: Types.ObjectId;
+  /** Optional organization logo stored on Cloudinary */
+  logo?: ICompanyImageAsset;
   verificationAuditTrail?: {
     verifiedAt?: Date;
     verifiedBy?: string;
@@ -28,13 +41,19 @@ export interface ICompany extends Document {
 
 const CompanySchema = new Schema<ICompany>(
   {
-    tenantId: { type: Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
     name: { type: String, required: true, trim: true },
-    domain: { type: String, required: true, trim: true, lowercase: true, index: true },
+    domain: { type: String, required: true, trim: true, lowercase: true, unique: true },
     registrationNumber: { type: String, trim: true },
     country: { type: String, trim: true },
     industry: { type: String, trim: true },
     size: { type: String, trim: true },
+    primaryContact: {
+      _id: false,
+      name: { type: String, trim: true },
+      email: { type: String, trim: true, lowercase: true },
+      phone: { type: String, trim: true },
+    },
+    tenantId: { type: Schema.Types.ObjectId, ref: "Tenant", index: true },
     activePlan: {
       type: String,
       enum: ["Bronze", "Silver", "Gold"],
@@ -53,7 +72,11 @@ const CompanySchema = new Schema<ICompany>(
       default: "Active",
       index: true,
     },
-    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+    logo: {
+      _id: false,
+      url: { type: String, trim: true },
+      publicId: { type: String, trim: true },
+    },
     verificationAuditTrail: {
       verifiedAt: { type: Date },
       verifiedBy: { type: String },
@@ -65,6 +88,5 @@ const CompanySchema = new Schema<ICompany>(
 );
 
 CompanySchema.index({ name: 1 });
-CompanySchema.index({ tenantId: 1, domain: 1 }, { unique: true });
 
 export const Company = model<ICompany>("Company", CompanySchema);

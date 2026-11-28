@@ -1,171 +1,31 @@
 import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
 import fs from "fs";
-import {
-  AssessmentSession,
-  IAssessmentSession,
-  IAnswer,
-  ExceptionStatus,
-  TestStatus,
-} from "../models/AssessmentSession.js";
+import { AssessmentSession, IAnswer, ExceptionStatus, TestStatus } from "../models/AssessmentSession.js";
 import { AssessmentFramework } from "../models/AssessmentFramework.js";
 import { Company } from "../models/Company.js";
 import { User } from "../models/User.js";
-import { TenantMembership } from "../models/TenantMembership.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import { ScoringService } from "../services/scoring.service.js";
 import { s3Service } from "../services/s3.service.js";
 import { ReportService } from "../services/report.service.js";
 import { ExportService } from "../services/export.service.js";
-import {
-  isAuditorAssignedToOrg,
-  canAuditorAccessSession,
-  isTenantAdminForSession,
-} from "../middlewares/companyScope.js";
-import { emailService } from "../services/email.service.js";
+import { isAuditorAssignedToOrg } from "../middlewares/companyScope.js";
+import { TenantMembership } from "../models/TenantMembership.js";
 import { normalizeUserRole } from "../middlewares/auth.js";
+import {
+  logAuthorizationDenied,
+  verifyReadAccessToSession,
+  verifyAuditorEditAccessToSession,
+} from "../utils/assessmentAccess.js";
+import { NotificationService } from "../services/notification.service.js";
+import { emailService } from "../services/email.service.js";
 
-/**
- * Helper to record authorization-denied events in the audit log
- */
-export async function logAuthorizationDenied(req: Request, entityId: string, reason: string) {
-  try {
-    if (req.user?.userId) {
-      await AuditLog.create({
-        tenantId: req.user.tenantId ? new Types.ObjectId(req.user.tenantId) : undefined,
-        actorId: req.user.userId,
-        actorEmail: req.user.email || "unknown",
-        action: "AUTHORIZATION_DENIED",
-        entity: "AssessmentSession",
-        entityId,
-        before: { reason },
-        ipAddress: req.ip,
-        userAgent: req.headers["user-agent"],
-      });
-    }
-  } catch (err) {
-    console.error("Failed to log authorization denial audit record:", err);
-  }
-}
-
-/**
- * Helper to check read access to an assessment session:
- * - SuperAdmin: NEVER allowed (tenant metadata only).
- * - TenantAdmin: Allowed for assessments in their own tenant.
- * - Auditor: Allowed ONLY if session belongs to their active tenant AND they created/conduct it or it was explicitly shared with them.
- */
-async function verifyReadAccessToSession(
-  req: Request,
-  res: Response,
-  session: IAssessmentSession
-): Promise<boolean> {
-  if (!req.user?.userId) {
-    sendError(res, "Authentication required", 401, "UNAUTHORIZED");
-    return false;
-  }
-
-  if (req.user.role === "SuperAdmin") {
-    await logAuthorizationDenied(
-      req,
-      session._id.toString(),
-      "SuperAdmin access to confidential assessment content is restricted (metadata only)."
-    );
-    sendError(
-      res,
-      "Super Admin sees tenant metadata only and cannot read assessment content.",
-      403,
-      "SUPER_ADMIN_CONTENT_ACCESS_RESTRICTED"
-    );
-    return false;
-  }
-
-  if (req.user.role === "TenantAdmin") {
-    const allowed = await isTenantAdminForSession(req, session);
-    if (!allowed) {
-      sendError(
-        res,
-        "Access denied. This assessment belongs to another tenant.",
-        403,
-        "CROSS_TENANT_ACCESS_DENIED"
-      );
-      return false;
-    }
-    return true;
-  }
-
-  // Auditor: must belong to tenant AND be creator/conductor or explicitly sharedWith
-  const allowed = await canAuditorAccessSession(
-    req.user.userId,
-    session,
-    req.user.tenantId
-  );
-  if (!allowed) {
-    sendError(
-      res,
-      "Access denied. Auditors can only view assessments they created or that were explicitly shared with them in their tenant.",
-      403,
-      "ASSESSMENT_ACCESS_DENIED"
-    );
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Helper to check edit / evidence / co-sign / submit access to an assessment session:
- * - SuperAdmin: NEVER allowed.
- * - TenantAdmin: NEVER allowed (TenantAdmin can create, view, and share assessments, but cannot edit answers, collect evidence, or co-sign).
- * - Auditor: Allowed ONLY if session belongs to their active tenant AND they created/conduct it or it was explicitly shared with them.
- */
-async function verifyAuditorEditAccessToSession(
-  req: Request,
-  res: Response,
-  session: IAssessmentSession,
-  actionDescription: string
-): Promise<boolean> {
-  if (!req.user?.userId) {
-    sendError(res, "Authentication required", 401, "UNAUTHORIZED");
-    return false;
-  }
-
-  if (req.user.role === "SuperAdmin" || req.user.role === "TenantAdmin") {
-    await logAuthorizationDenied(
-      req,
-      session._id.toString(),
-      `${req.user.role} access to ${actionDescription} is restricted to Auditors.`
-    );
-    sendError(
-      res,
-      `Role ${req.user.role} cannot ${actionDescription}. Only Auditors (creator or shared) can perform this action.`,
-      403,
-      "AUDITOR_ROLE_REQUIRED"
-    );
-    return false;
-  }
-
-  const allowed = await canAuditorAccessSession(
-    req.user.userId,
-    session,
-    req.user.tenantId
-  );
-  if (!allowed) {
-    sendError(
-      res,
-      "Access denied. You can only edit, collect evidence for, or co-sign assessments you created or that were shared with you in your tenant.",
-      403,
-      "ASSESSMENT_ACCESS_DENIED"
-    );
-    return false;
-  }
-
-  return true;
-}
+export { logAuthorizationDenied };
 
 /**
  * Initialize a new assessment session
- * Allowed for TenantAdmin (own tenant) and Auditor (against any client in their active tenant).
  */
 export async function createAssessment(req: Request, res: Response, next: NextFunction) {
   try {
@@ -176,18 +36,11 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
       clientContact,
       conductedByUserId: requestedAuditorId,
     } = req.body;
-
     if (!req.user?.userId) {
       return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
     }
-
-    if (req.user.role === "SuperAdmin") {
-      return sendError(
-        res,
-        "Super Admin cannot create or run assessments.",
-        403,
-        "SUPER_ADMIN_RESTRICTED"
-      );
+    if (normalizeUserRole(req.user.role) === "SuperAdmin") {
+      return sendError(res, "Super Admin cannot create or run assessments.", 403, "SUPER_ADMIN_RESTRICTED");
     }
 
     const actorId = req.user.userId;
@@ -195,10 +48,9 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
 
     const company = await Company.findById(companyId);
     if (!company) {
-      return sendError(res, "Client organization not found", 404, "COMPANY_NOT_FOUND");
+      return sendError(res, "Company not found", 404, "COMPANY_NOT_FOUND");
     }
 
-    // Tenant isolation check: verify caller belongs to the company's tenant
     const isAllowed = await isAuditorAssignedToOrg(actorId, companyId, req.user.tenantId);
     if (!isAllowed) {
       return sendError(
@@ -213,7 +65,6 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
       company.tenantId ||
       (req.user.tenantId ? new Types.ObjectId(req.user.tenantId) : undefined);
 
-    // If TenantAdmin or Auditor specified a lead auditor, verify they belong to the same tenant
     let leadAuditorId = new Types.ObjectId(actorId);
     const initialSharedWith: Array<{
       auditorId: Types.ObjectId;
@@ -231,7 +82,6 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
           "INVALID_AUDITOR"
         );
       }
-
       if (resolvedTenantId) {
         const membership = await TenantMembership.findOne({
           tenantId: resolvedTenantId,
@@ -251,7 +101,6 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
           );
         }
       }
-
       leadAuditorId = targetAuditor._id as Types.ObjectId;
       initialSharedWith.push({
         auditorId: leadAuditorId,
@@ -261,7 +110,7 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
     }
 
     // Resolve published framework
-    const query: Record<string, unknown> = {
+    const query: Record<string, any> = {
       assessmentType,
       status: "Published",
     };
@@ -344,13 +193,13 @@ export async function createAssessment(req: Request, res: Response, next: NextFu
 
 /**
  * Get assessment session by ID (Save & Resume)
- * - TenantAdmin: Can view any assessment in their own tenant.
- * - Auditor: Can view assessments they created/conduct or that were shared with them in their tenant.
- * - SuperAdmin: Blocked.
  */
 export async function getAssessmentById(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
     const session = await AssessmentSession.findById(id)
       .populate("companyId", "name domain verificationStatus status tenantId")
       .populate("conductedByUserId", "name email role")
@@ -389,14 +238,11 @@ export async function getAssessmentById(req: Request, res: Response, next: NextF
 }
 
 /**
- * List assessment sessions with strict tenant & role scoping:
- * - SuperAdmin: Blocked from assessment content.
- * - TenantAdmin: Sees all assessments in their own tenant.
- * - Auditor: Sees ONLY assessments they created/conduct OR that were explicitly shared with them in their active tenant.
+ * List assessment sessions with scoping and pagination
  */
 export async function getAssessments(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user?.role === "SuperAdmin") {
+    if (normalizeUserRole(req.user?.role) === "SuperAdmin") {
       return sendError(
         res,
         "Super Admin sees tenant metadata only and cannot list assessment sessions.",
@@ -427,8 +273,7 @@ export async function getAssessments(req: Request, res: Response, next: NextFunc
       filter.companyId = new Types.ObjectId(req.user.companyId);
     }
 
-    // Auditors ONLY see assessments they created/conduct or that were explicitly shared with them
-    if (req.user?.role === "Auditor" && req.user.userId) {
+    if (normalizeUserRole(req.user?.role) === "Auditor" && req.user?.userId) {
       const uid = new Types.ObjectId(req.user.userId);
       filter.$or = [
         { conductedByUserId: uid },
@@ -461,48 +306,31 @@ export async function getAssessments(req: Request, res: Response, next: NextFunc
   }
 }
 
-/**
- * Share an assessment with one or more Auditors in the SAME tenant.
- * Allowed for TenantAdmin (own tenant) and Auditor (creator or already shared in same tenant).
- */
 export async function shareAssessment(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
-    const { auditorId, auditorIds } = req.body as {
-      auditorId?: string;
-      auditorIds?: string[];
-    };
+    const { auditorId, auditorIds } = req.body as { auditorId?: string; auditorIds?: string[] };
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    // Verify caller has access to share this assessment
     const canAccess = await verifyReadAccessToSession(req, res, session);
     if (!canAccess) return;
 
-    const targetIds = Array.from(
-      new Set([...(auditorIds || []), ...(auditorId ? [auditorId] : [])])
-    );
+    const targetIds = Array.from(new Set([...(auditorIds || []), ...(auditorId ? [auditorId] : [])]));
 
-    // Resolve the tenant that owns this assessment
     let sessionTenantId = session.tenantId;
     if (!sessionTenantId) {
       const company = await Company.findById(session.companyId).select("tenantId");
       sessionTenantId = company?.tenantId;
     }
 
-    // Verify every target user is an active Auditor in the same tenant
     for (const targetAuditorId of targetIds) {
       const targetUser = await User.findById(targetAuditorId);
       if (!targetUser || normalizeUserRole(targetUser.role) !== "Auditor") {
-        return sendError(
-          res,
-          `User '${targetAuditorId}' is not a valid Auditor.`,
-          400,
-          "INVALID_AUDITOR"
-        );
+        return sendError(res, `User '${targetAuditorId}' is not a valid Auditor.`, 400, "INVALID_AUDITOR");
       }
 
       if (sessionTenantId) {
@@ -512,10 +340,7 @@ export async function shareAssessment(req: Request, res: Response, next: NextFun
           role: "Auditor",
           status: "Active",
         });
-
-        const matchesPrimaryTenant =
-          targetUser.tenantId?.toString() === sessionTenantId.toString();
-
+        const matchesPrimaryTenant = targetUser.tenantId?.toString() === sessionTenantId.toString();
         if (!membership && !matchesPrimaryTenant) {
           return sendError(
             res,
@@ -566,9 +391,6 @@ export async function shareAssessment(req: Request, res: Response, next: NextFun
   }
 }
 
-/**
- * Revoke assessment sharing for a specific Auditor in the tenant.
- */
 export async function revokeAssessmentShare(req: Request, res: Response, next: NextFunction) {
   try {
     const { id, auditorId } = req.params;
@@ -581,9 +403,7 @@ export async function revokeAssessmentShare(req: Request, res: Response, next: N
     const canAccess = await verifyReadAccessToSession(req, res, session);
     if (!canAccess) return;
 
-    session.sharedWith = session.sharedWith.filter(
-      (s) => s.auditorId.toString() !== auditorId
-    );
+    session.sharedWith = session.sharedWith.filter((s) => s.auditorId.toString() !== auditorId);
     await session.save();
 
     await AuditLog.create({
@@ -607,10 +427,6 @@ export async function revokeAssessmentShare(req: Request, res: Response, next: N
   }
 }
 
-/**
- * Co-sign a shared or conducted assessment (Auditor only).
- * "Shared auditors can edit and co-sign, so reviews and handoffs don't require Tenant Admin involvement."
- */
 export async function coSignAssessment(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
@@ -621,12 +437,7 @@ export async function coSignAssessment(req: Request, res: Response, next: NextFu
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canEdit = await verifyAuditorEditAccessToSession(
-      req,
-      res,
-      session,
-      "co-sign an assessment"
-    );
+    const canEdit = await verifyAuditorEditAccessToSession(req, res, session, "co-sign an assessment");
     if (!canEdit) return;
 
     const auditor = await User.findById(req.user!.userId).select("name email");
@@ -681,25 +492,22 @@ export async function coSignAssessment(req: Request, res: Response, next: NextFu
 
 /**
  * Save/update answer(s) (Single or Batch)
- * Strictly restricted to Auditors (creator/conductor or shared auditor in the same tenant).
+ * Deterministically resolves scoreValue, exceptionStatus, and pillar metadata
+ * against the active AssessmentFramework definition.
  */
 export async function saveAnswers(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
     const { answers } = req.body;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+    const actorId = req.user.userId;
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
-
-    const canEdit = await verifyAuditorEditAccessToSession(
-      req,
-      res,
-      session,
-      "modify assessment answers"
-    );
-    if (!canEdit) return;
 
     if (session.status === "Submitted") {
       return sendError(
@@ -710,7 +518,8 @@ export async function saveAnswers(req: Request, res: Response, next: NextFunctio
       );
     }
 
-    const actorId = req.user!.userId;
+    const canEdit = await verifyAuditorEditAccessToSession(req, res, session, "edit assessment answers");
+    if (!canEdit) return;
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -720,6 +529,7 @@ export async function saveAnswers(req: Request, res: Response, next: NextFunctio
       (framework?.questions || []).map((q) => [q.questionId, q])
     );
 
+    // Merge answers into existing map
     const existingMap = new Map(session.answers.map((a) => [a.questionId, a]));
 
     for (const newAns of answers) {
@@ -761,11 +571,13 @@ export async function saveAnswers(req: Request, res: Response, next: NextFunctio
           newAns.exceptionStatus === "NotAssessed" ||
           newAns.selectedOptionCode === "NOT_ASSESSED"
         ) {
+          // Clear placeholder — NOT_ASSESSED must not count as an answered control
           resolvedExceptionStatus = "NotAssessed";
-          resolvedSelectedCode = "NOT_ASSESSED";
+          resolvedSelectedCode = undefined;
           resolvedScoreValue = 0;
         }
       } else {
+        // Light Assessment: auto-derive scoreValue from framework responseOptions when selectedOptionCode is provided
         if (resolvedSelectedCode && qDef?.responseOptions?.length) {
           const matchedOpt = qDef.responseOptions.find(
             (o) =>
@@ -800,12 +612,24 @@ export async function saveAnswers(req: Request, res: Response, next: NextFunctio
     session.answers = Array.from(existingMap.values());
     await session.save();
 
+    const isFull = session.assessmentType === "Full";
     return sendSuccess(res, {
       message: "Answers saved successfully",
       savedCount: answers.length,
-      totalAnswered: session.answers.filter(
-        (a) => a.testStatus === "Complete" || !!a.selectedOptionCode
-      ).length,
+      totalAnswered: session.answers.filter((a) => {
+        if (isFull) {
+          return (
+            a.exceptionStatus === "NoExceptionNoted" ||
+            a.exceptionStatus === "ExceptionNoted" ||
+            a.selectedOptionCode === "NO_EXCEPTION_NOTED" ||
+            a.selectedOptionCode === "EXCEPTION_NOTED"
+          );
+        }
+        return (
+          a.testStatus === "Complete" ||
+          (!!a.selectedOptionCode && a.selectedOptionCode !== "NOT_ASSESSED")
+        );
+      }).length,
     });
   } catch (err) {
     next(err);
@@ -814,6 +638,8 @@ export async function saveAnswers(req: Request, res: Response, next: NextFunctio
 
 /**
  * Calculate real-time progress for an assessment session
+ * Includes Section 1: Organization & AI Landscape (pillarNumber: 0) for Light Assessments
+ * so completion reaches 100% (30/30) when all questions are answered.
  */
 export async function getAssessmentProgress(req: Request, res: Response, next: NextFunction) {
   try {
@@ -823,8 +649,14 @@ export async function getAssessmentProgress(req: Request, res: Response, next: N
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    if (req.user?.role !== "Admin" && req.user?.role !== "SuperAdmin") {
+      const orgId = session.companyId.toString();
+      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, orgId);
+      const isCreator = session.conductedByUserId?.toString() === req.user?.userId;
+      if (!isAssigned && !isCreator && orgId !== req.user?.companyId?.toString()) {
+        return sendError(res, "Access denied.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+      }
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -837,6 +669,7 @@ export async function getAssessmentProgress(req: Request, res: Response, next: N
     const activeQuestions = framework.questions.filter((q) => q.isActive !== false);
     const answerMap = new Map(session.answers.map((a) => [a.questionId, a]));
 
+    // Build list of sections/pillars to evaluate (prepend Section 1: AI Landscape if present)
     const sectionsToTrack: Array<{
       pillarId: string;
       name: string;
@@ -877,22 +710,64 @@ export async function getAssessmentProgress(req: Request, res: Response, next: N
 
       for (const q of questions) {
         const a = answerMap.get(q.questionId);
+        const meaningfulCode =
+          a?.selectedOptionCode && a.selectedOptionCode !== "NOT_ASSESSED"
+            ? a.selectedOptionCode
+            : undefined;
+
+        if (session.assessmentType === "Full") {
+          // Full: only exception outcomes count as complete — ignore NOT_ASSESSED placeholders
+          const assessed =
+            a?.exceptionStatus === "NoExceptionNoted" ||
+            a?.exceptionStatus === "ExceptionNoted" ||
+            meaningfulCode === "NO_EXCEPTION_NOTED" ||
+            meaningfulCode === "EXCEPTION_NOTED";
+          const working =
+            !!a &&
+            !assessed &&
+            (a.testStatus === "InProgress" ||
+              Boolean(a.evidenceNotes?.trim()) ||
+              Boolean(a.workPaperReference?.trim()) ||
+              Boolean(a.evidenceAttachmentUrl));
+
+          if (assessed) {
+            complete++;
+            if (
+              a!.exceptionStatus === "ExceptionNoted" ||
+              meaningfulCode === "EXCEPTION_NOTED"
+            ) {
+              exceptionsNoted++;
+            }
+            if (
+              a!.exceptionStatus === "NoExceptionNoted" ||
+              meaningfulCode === "NO_EXCEPTION_NOTED"
+            ) {
+              noExceptions++;
+            }
+          } else if (working) {
+            inProgress++;
+          } else {
+            notStarted++;
+          }
+          continue;
+        }
+
         if (
           !a ||
-          (a.testStatus === "NotStarted" && !a.selectedOptionCode) ||
-          (!a.testStatus && !a.selectedOptionCode)
+          (a.testStatus === "NotStarted" && !meaningfulCode) ||
+          (!a.testStatus && !meaningfulCode)
         ) {
           notStarted++;
-        } else if (a.testStatus === "InProgress" && !a.selectedOptionCode) {
+        } else if (a.testStatus === "InProgress" && !meaningfulCode) {
           inProgress++;
         } else {
           complete++;
-          if (a.exceptionStatus === "ExceptionNoted" || a.selectedOptionCode === "EXCEPTION_NOTED") {
+          if (a.exceptionStatus === "ExceptionNoted" || meaningfulCode === "EXCEPTION_NOTED") {
             exceptionsNoted++;
           }
           if (
             a.exceptionStatus === "NoExceptionNoted" ||
-            a.selectedOptionCode === "NO_EXCEPTION_NOTED"
+            meaningfulCode === "NO_EXCEPTION_NOTED"
           ) {
             noExceptions++;
           }
@@ -939,30 +814,33 @@ export async function getAssessmentProgress(req: Request, res: Response, next: N
 }
 
 /**
- * Finalize & submit assessment session, locking answers and computing scores (Auditor only)
+ * Finalize & submit assessment session, locking answers and computing scores
  */
 export async function submitAssessment(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+    const actorId = req.user.userId;
+    const actorEmail = req.user.email || "unknown";
+
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
+    }
+
+    if (session.status === "Submitted") {
+      return sendError(res, "Assessment is already submitted.", 400, "ALREADY_SUBMITTED");
     }
 
     const canEdit = await verifyAuditorEditAccessToSession(
       req,
       res,
       session,
-      "submit or finalize assessments"
+      "submit an assessment"
     );
     if (!canEdit) return;
-
-    if (session.status === "Submitted") {
-      return sendError(res, "Assessment is already submitted.", 400, "ALREADY_SUBMITTED");
-    }
-
-    const actorId = req.user!.userId;
-    const actorEmail = req.user!.email || "unknown";
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -972,22 +850,8 @@ export async function submitAssessment(req: Request, res: Response, next: NextFu
       return sendError(res, "Framework not found", 404, "FRAMEWORK_NOT_FOUND");
     }
 
+    // Compute deterministic score snapshot
     const scoreSnapshot = ScoringService.calculateScores(session, framework);
-
-    // Ensure the submitting auditor's signature is recorded in coSignatures
-    const submittingAuditor = await User.findById(actorId).select("name email");
-    if (
-      submittingAuditor &&
-      !session.coSignatures.some((sig) => sig.auditorId.toString() === actorId.toString())
-    ) {
-      session.coSignatures.push({
-        auditorId: submittingAuditor._id as Types.ObjectId,
-        auditorName: submittingAuditor.name,
-        auditorEmail: submittingAuditor.email,
-        signedAt: new Date(),
-        attestationNotes: "Submitted and finalized assessment.",
-      });
-    }
 
     session.status = "Submitted";
     session.scoreSnapshot = scoreSnapshot;
@@ -995,7 +859,6 @@ export async function submitAssessment(req: Request, res: Response, next: NextFu
     await session.save();
 
     await AuditLog.create({
-      tenantId: session.tenantId,
       actorId,
       actorEmail,
       action: "ASSESSMENT_SUBMITTED",
@@ -1021,25 +884,45 @@ export async function submitAssessment(req: Request, res: Response, next: NextFu
 }
 
 /**
- * Generate S3 presigned upload URL for evidence (Auditor only: "auditors collect its evidence")
+ * Generate S3 presigned upload URL for evidence
  */
 export async function getEvidencePresignedUrl(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
     const { questionId, fileName, contentType } = req.body;
 
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canEdit = await verifyAuditorEditAccessToSession(
-      req,
-      res,
-      session,
-      "collect or upload assessment evidence"
-    );
-    if (!canEdit) return;
+    // RULE 1: Admin is strictly prohibited from generating evidence URLs
+    if (req.user?.role === "Admin") {
+      await logAuthorizationDenied(
+        req,
+        id,
+        "Admin access to assessment evidence presigned URL is restricted."
+      );
+      return sendError(
+        res,
+        "Administrative access to confidential assessment evidence is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
+
+    // RULE 2: Auditor must be assigned to this assessment's organization
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const result = await s3Service.getPresignedUploadUrl(
       session.companyId.toString(),
@@ -1056,13 +939,17 @@ export async function getEvidencePresignedUrl(req: Request, res: Response, next:
 }
 
 /**
- * Direct file upload handler (Auditor only: "auditors collect its evidence")
+ * Direct file upload handler (Multi-part upload with S3 storage)
  */
 export async function uploadEvidenceDirect(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
     const questionId = req.body.questionId;
     const file = req.file;
+
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
 
     if (!file) {
       return sendError(res, "No file provided for upload", 400, "FILE_REQUIRED");
@@ -1076,13 +963,29 @@ export async function uploadEvidenceDirect(req: Request, res: Response, next: Ne
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canEdit = await verifyAuditorEditAccessToSession(
-      req,
-      res,
-      session,
-      "collect or upload assessment evidence"
-    );
-    if (!canEdit) return;
+    // RULE 1: Admin is strictly prohibited from uploading assessment evidence
+    if (req.user?.role === "Admin") {
+      await logAuthorizationDenied(
+        req,
+        id,
+        "Admin access to upload assessment evidence is restricted."
+      );
+      return sendError(
+        res,
+        "Administrative access to confidential assessment evidence is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
+
+    // RULE 2: Auditor must be assigned to this assessment's organization
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const uploadResult = await s3Service.uploadFileBuffer(
       file.buffer,
@@ -1093,6 +996,7 @@ export async function uploadEvidenceDirect(req: Request, res: Response, next: Ne
       file.mimetype
     );
 
+    // Automatically link to answer in session
     const answer = session.answers.find((a) => a.questionId === questionId);
     if (answer) {
       answer.evidenceAttachmentUrl = uploadResult.fileUrl;
@@ -1120,43 +1024,15 @@ export async function getCompanyAssessments(req: Request, res: Response, next: N
       return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
     }
 
-    if (req.user.role === "SuperAdmin") {
-      return sendError(
-        res,
-        "Super Admin sees tenant metadata only and cannot read assessment sessions.",
-        403,
-        "SUPER_ADMIN_CONTENT_ACCESS_RESTRICTED"
-      );
+    if (req.user.role !== "Admin") {
+      const isAssigned = await isAuditorAssignedToOrg(req.user.userId, companyId);
+      if (!isAssigned) {
+        return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+      }
     }
 
-    const isAllowed = await isAuditorAssignedToOrg(
-      req.user.userId,
-      companyId,
-      req.user.tenantId
-    );
-    if (!isAllowed) {
-      return sendError(
-        res,
-        "Access denied. This client organization belongs to another tenant.",
-        403,
-        "CROSS_TENANT_ACCESS_DENIED"
-      );
-    }
-
-    const filter: Record<string, unknown> = { companyId };
-    if (req.user.role === "Auditor") {
-      const uid = new Types.ObjectId(req.user.userId);
-      filter.$or = [
-        { conductedByUserId: uid },
-        { createdByUserId: uid },
-        { "sharedWith.auditorId": uid },
-      ];
-    }
-
-    const sessions = await AssessmentSession.find(filter)
+    const sessions = await AssessmentSession.find({ companyId })
       .populate("conductedByUserId", "name email")
-      .populate("createdByUserId", "name email")
-      .populate("sharedWith.auditorId", "name email")
       .sort({ createdAt: -1 });
 
     return sendSuccess(res, sessions);
@@ -1172,13 +1048,38 @@ export async function getAssessmentGaps(req: Request, res: Response, next: NextF
   try {
     const { id } = req.params;
 
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    // RULE 1: Admin is strictly prohibited from accessing confidential gap analysis
+    if (req.user?.role === "Admin") {
+      await logAuthorizationDenied(
+        req,
+        id,
+        "Admin access to confidential assessment gaps and findings is restricted."
+      );
+      return sendError(
+        res,
+        "Administrative access to confidential assessment findings and gaps is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
+
+    // RULE 2: Auditor must be assigned to this assessment's organization
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -1207,14 +1108,32 @@ export async function getAssessmentGaps(req: Request, res: Response, next: NextF
 export async function getAssessmentSummary(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to assessment summary is restricted.");
+      return sendError(
+        res,
+        "Administrative access to confidential assessment summary is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id).populate("companyId", "name domain");
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId._id ? session.companyId._id.toString() : session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -1225,6 +1144,20 @@ export async function getAssessmentSummary(req: Request, res: Response, next: Ne
     }
 
     const snapshot = session.scoreSnapshot || ScoringService.calculateScores(session, framework);
+    const gaps = ScoringService.extractGaps(session, framework);
+
+    // Light snapshots omit exception/control-assessed totals; never fall back to overallScore
+    // (0–120 points) as a control count — that produced "61 controls assessed" vs 26 in pillars.
+    const totalExceptionsNoted =
+      typeof snapshot.totalExceptionsNoted === "number"
+        ? snapshot.totalExceptionsNoted
+        : gaps.length;
+    const totalControlsAssessed =
+      typeof snapshot.totalControlsAssessed === "number"
+        ? snapshot.totalControlsAssessed
+        : session.answers.filter(
+            (a) => a.testStatus === "Complete" || !!a.selectedOptionCode
+          ).length;
 
     return sendSuccess(res, {
       assessmentId: session._id,
@@ -1238,11 +1171,10 @@ export async function getAssessmentSummary(req: Request, res: Response, next: Ne
       overallPercentage: snapshot.overallPercentage,
       compliancePercentage: snapshot.compliancePercentage,
       maturityLevel: snapshot.maturityLevel,
-      totalExceptionsNoted: snapshot.totalExceptionsNoted || 0,
+      totalExceptionsNoted,
       totalNoExceptionsNoted: snapshot.totalNoExceptionsNoted || 0,
       totalNotAssessed: snapshot.totalNotAssessed || 0,
-      totalControlsAssessed: snapshot.totalControlsAssessed || snapshot.overallScore,
-      coSignatures: session.coSignatures || [],
+      totalControlsAssessed,
       submittedAt: session.submittedAt,
       calculatedAt: snapshot.calculatedAt,
     });
@@ -1252,19 +1184,37 @@ export async function getAssessmentSummary(req: Request, res: Response, next: Ne
 }
 
 /**
- * Retrieve 7-pillar breakdown formatted for radar/spider charts
+ * Retrieve 7-pillar breakdown formatted for radar/spider charts (Screen 1 & 3 Alignment)
  */
 export async function getAssessmentPillars(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to assessment pillar radar breakdown is restricted.");
+      return sendError(
+        res,
+        "Administrative access to confidential assessment pillar data is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -1305,14 +1255,32 @@ export async function getAssessmentPillars(req: Request, res: Response, next: Ne
 export async function getAssessmentRecommendations(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to assessment recommendations is restricted.");
+      return sendError(
+        res,
+        "Administrative access to confidential assessment recommendations is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -1352,14 +1320,32 @@ export async function getAssessmentRecommendations(req: Request, res: Response, 
 export async function getAssessmentFindings(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to assessment findings is restricted.");
+      return sendError(
+        res,
+        "Administrative access to confidential assessment findings is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id).populate("companyId", "name");
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId._id ? session.companyId._id.toString() : session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
+
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
 
     const framework = await AssessmentFramework.findOne({
       version: session.frameworkVersion,
@@ -1370,7 +1356,7 @@ export async function getAssessmentFindings(req: Request, res: Response, next: N
     }
 
     const gaps = ScoringService.extractGaps(session, framework);
-    const companyName = (session.companyId as unknown as { name?: string })?.name || "Organization";
+    const companyName = (session.companyId as any)?.name || "Organization";
 
     const findings = gaps.map((g, idx) => ({
       findingId: `FND-${new Date().getFullYear()}-${String(idx + 1).padStart(3, "0")}`,
@@ -1410,37 +1396,61 @@ export async function getAssessmentFindings(req: Request, res: Response, next: N
 export async function generateAssessmentReport(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to generate assessment reports is restricted.");
+      return sendError(
+        res,
+        "Administrative access to generate or download confidential assessment reports is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
 
-    const [company, framework, auditor] = await Promise.all([
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
+
+    const [company, framework, auditor, conductedBy] = await Promise.all([
       Company.findById(session.companyId),
       AssessmentFramework.findOne({
         version: session.frameworkVersion,
         assessmentType: session.assessmentType,
       }),
-      User.findById(session.conductedByUserId || req.user!.userId),
+      User.findById(req.user.userId),
+      User.findById(session.conductedByUserId),
     ]);
 
     if (!company || !framework || !auditor) {
       return sendError(res, "Required assessment context not found", 404, "CONTEXT_NOT_FOUND");
     }
 
-    const reportResult = await ReportService.generateAssessmentReport(session, company, framework, auditor);
+    const reportResult = await ReportService.generateAssessmentReport(
+      session,
+      company,
+      framework,
+      auditor,
+      conductedBy
+    );
 
     session.reportMetadata = reportResult.metadata;
     await session.save();
 
     await AuditLog.create({
-      tenantId: session.tenantId,
-      actorId: req.user!.userId,
-      actorEmail: req.user!.email || "unknown",
+      actorId: req.user.userId,
+      actorEmail: req.user.email || "unknown",
       action: "REPORT_GENERATED",
       entity: "AssessmentSession",
       entityId: session._id.toString(),
@@ -1468,33 +1478,59 @@ export async function generateAssessmentReport(req: Request, res: Response, next
 export async function downloadAssessmentReport(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to download assessment reports is restricted.");
+      return sendError(
+        res,
+        "Administrative access to download confidential assessment reports is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
 
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
+
+    // Prefer stored report when available; otherwise generate on demand.
     if (session.reportMetadata?.filePath && fs.existsSync(session.reportMetadata.filePath)) {
       return res.download(session.reportMetadata.filePath, session.reportMetadata.fileName);
     }
 
-    const [company, framework, auditor] = await Promise.all([
+    const [company, framework, auditor, conductedBy] = await Promise.all([
       Company.findById(session.companyId),
       AssessmentFramework.findOne({
         version: session.frameworkVersion,
         assessmentType: session.assessmentType,
       }),
-      User.findById(session.conductedByUserId || req.user!.userId),
+      User.findById(req.user.userId),
+      User.findById(session.conductedByUserId),
     ]);
 
     if (!company || !framework || !auditor) {
       return sendError(res, "Required assessment context not found", 404, "CONTEXT_NOT_FOUND");
     }
 
-    const reportResult = await ReportService.generateAssessmentReport(session, company, framework, auditor);
+    const reportResult = await ReportService.generateAssessmentReport(
+      session,
+      company,
+      framework,
+      auditor,
+      conductedBy
+    );
     session.reportMetadata = reportResult.metadata;
     await session.save();
 
@@ -1512,28 +1548,54 @@ export async function downloadAssessmentReport(req: Request, res: Response, next
 export async function exportAssessmentExcel(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    if (!req.user?.userId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    if (req.user.role === "Admin") {
+      await logAuthorizationDenied(req, id, "Admin access to export assessment data is restricted.");
+      return sendError(
+        res,
+        "Administrative access to export confidential assessment data is restricted.",
+        403,
+        "ADMIN_CONTENT_ACCESS_RESTRICTED"
+      );
+    }
 
     const session = await AssessmentSession.findById(id);
     if (!session) {
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
+    const orgId = session.companyId.toString();
+    const isAssigned = await isAuditorAssignedToOrg(req.user.userId, orgId);
+    const isCreator = session.conductedByUserId?.toString() === req.user.userId;
 
-    const [company, framework] = await Promise.all([
+    if (!isAssigned && !isCreator) {
+      return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+    }
+
+    const [company, framework, auditor, conductedBy] = await Promise.all([
       Company.findById(session.companyId),
       AssessmentFramework.findOne({
         version: session.frameworkVersion,
         assessmentType: session.assessmentType,
       }),
+      User.findById(req.user.userId),
+      User.findById(session.conductedByUserId),
     ]);
 
-    if (!company || !framework) {
+    if (!company || !framework || !auditor) {
       return sendError(res, "Required assessment context not found", 404, "CONTEXT_NOT_FOUND");
     }
 
-    const excelBuffer = ExportService.generateAssessmentExcel(session, company, framework);
+    const excelBuffer = await ExportService.generateAssessmentExcel(
+      session,
+      company,
+      framework,
+      auditor,
+      conductedBy
+    );
     const fileName = `GRAICE_Audit_Findings_${company.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_${session._id}.xlsx`;
 
     res.setHeader(
@@ -1558,9 +1620,6 @@ export async function sendAssessmentReminderNotification(req: Request, res: Resp
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
-
     if (session.status !== "InProgress") {
       return sendError(
         res,
@@ -1568,6 +1627,15 @@ export async function sendAssessmentReminderNotification(req: Request, res: Resp
         400,
         "INVALID_SESSION_STATUS"
       );
+    }
+
+    // Role check: Auditor must be assigned to org or be Admin
+    if (req.user?.role !== "Admin") {
+      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, session.companyId.toString());
+      const isCreator = session.conductedByUserId?.toString() === req.user!.userId;
+      if (!isAssigned && !isCreator) {
+        return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+      }
     }
 
     const company = await Company.findById(session.companyId);
@@ -1580,7 +1648,7 @@ export async function sendAssessmentReminderNotification(req: Request, res: Resp
       return sendError(res, "Recipient email address is required", 400, "RECIPIENT_EMAIL_REQUIRED");
     }
 
-    const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:3000";
+    const clientBaseUrl = emailService.getAppBaseUrl();
     const deepLinkUrl = `${clientBaseUrl}/assessments/${session._id}`;
 
     await emailService.sendAssessmentReminder({
@@ -1593,7 +1661,6 @@ export async function sendAssessmentReminderNotification(req: Request, res: Resp
     });
 
     await AuditLog.create({
-      tenantId: session.tenantId,
       actorId: req.user!.userId,
       actorEmail: req.user!.email,
       action: "ASSESSMENT_REMINDER_SENT",
@@ -1625,9 +1692,6 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
       return sendError(res, "Assessment session not found", 404, "SESSION_NOT_FOUND");
     }
 
-    const canRead = await verifyReadAccessToSession(req, res, session);
-    if (!canRead) return;
-
     if (session.status !== "Submitted") {
       return sendError(
         res,
@@ -1635,6 +1699,15 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
         400,
         "ASSESSMENT_NOT_SUBMITTED"
       );
+    }
+
+    // Role check: Auditor must be assigned or Admin
+    if (req.user?.role !== "Admin") {
+      const isAssigned = await isAuditorAssignedToOrg(req.user!.userId, session.companyId.toString());
+      const isCreator = session.conductedByUserId?.toString() === req.user!.userId;
+      if (!isAssigned && !isCreator) {
+        return sendError(res, "Access denied. You are not assigned to this organization.", 403, "CROSS_COMPANY_ACCESS_DENIED");
+      }
     }
 
     const company = await Company.findById(session.companyId);
@@ -1650,6 +1723,7 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
     const score = session.scoreSnapshot?.compliancePercentage ?? session.scoreSnapshot?.overallPercentage ?? 0;
     const maturityLevel = session.scoreSnapshot?.maturityLevel || "Emerging";
     const reportDownloadUrl = session.reportMetadata?.fileUrl;
+    const viewResultsUrl = `${emailService.getAppBaseUrl()}/assessments/${session._id}/results`;
 
     await emailService.sendAssessmentCompleted({
       recipientEmail,
@@ -1658,10 +1732,10 @@ export async function sendAssessmentCompletionNotification(req: Request, res: Re
       score,
       maturityLevel,
       reportDownloadUrl,
+      viewResultsUrl,
     });
 
     await AuditLog.create({
-      tenantId: session.tenantId,
       actorId: req.user!.userId,
       actorEmail: req.user!.email,
       action: "ASSESSMENT_COMPLETION_NOTIFICATION_SENT",

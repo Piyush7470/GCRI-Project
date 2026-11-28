@@ -1,10 +1,15 @@
 import { Router } from "express";
 import {
   getAdminDashboardSummary,
+  getAdminScopeOrganizations,
   getAdminDashboardAssessments,
+  getAdminDashboardAnalytics,
   getAuditorDashboardSummary,
   getAuditorDashboardAssessments,
+  getAuditorDashboardAnalytics,
   getAuditorOrganizations,
+  exportAdminDashboardAnalytics,
+  exportAuditorDashboardAnalytics,
 } from "../controllers/dashboard.controller.js";
 import { authenticate, authorize } from "../middlewares/auth.js";
 import { validateRequest } from "../middlewares/validate.js";
@@ -33,7 +38,56 @@ const router = Router();
  *       403:
  *         description: Platform administrators only
  */
-router.get("/admin/summary", authenticate, authorize("SuperAdmin", "TenantAdmin"), getAdminDashboardSummary);
+router.get(
+  "/admin/summary",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  getAdminDashboardSummary
+);
+
+/**
+ * @openapi
+ * /api/v1/dashboard/admin/analytics:
+ *   get:
+ *     summary: Platform analytics (KPIs, trends, charts, outliers)
+ *     tags:
+ *       - Dashboard - Admin
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: range
+ *         schema:
+ *           type: string
+ *           enum: [30d, 90d, 6m, 1y]
+ *       - in: query
+ *         name: companyId
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Analytics payload for charts and KPI ribbon
+ */
+router.get(
+  "/admin/analytics",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  getAdminDashboardAnalytics
+);
+
+router.get(
+  "/admin/scope-organizations",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  getAdminScopeOrganizations
+);
+
+router.get(
+  "/admin/analytics/export",
+  authenticate,
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
+  exportAdminDashboardAnalytics
+);
 
 /**
  * @openapi
@@ -77,7 +131,7 @@ router.get("/admin/summary", authenticate, authorize("SuperAdmin", "TenantAdmin"
 router.get(
   "/admin/assessments",
   authenticate,
-  authorize("SuperAdmin", "TenantAdmin"),
+  authorize("SuperAdmin", "Admin", "TenantAdmin"),
   validateRequest(AdminDashboardAssessmentsQuerySchema),
   getAdminDashboardAssessments
 );
@@ -100,7 +154,42 @@ router.get(
  *       403:
  *         description: Assessors only
  */
-router.get("/auditor/summary", authenticate, authorize("Auditor"), getAuditorDashboardSummary);
+router.get(
+  "/auditor/summary",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  getAuditorDashboardSummary
+);
+
+/**
+ * @openapi
+ * /api/v1/dashboard/auditor/analytics:
+ *   get:
+ *     summary: Assessor analytics (scoped KPIs, trends, charts)
+ *     tags:
+ *       - Dashboard - Auditor
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: range
+ *         schema:
+ *           type: string
+ *           enum: [30d, 90d, 6m, 1y]
+ */
+router.get(
+  "/auditor/analytics",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  getAuditorDashboardAnalytics
+);
+
+router.get(
+  "/auditor/analytics/export",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  exportAuditorDashboardAnalytics
+);
 
 /**
  * @openapi
@@ -142,7 +231,7 @@ router.get("/auditor/summary", authenticate, authorize("Auditor"), getAuditorDas
 router.get(
   "/auditor/assessments",
   authenticate,
-  authorize("Auditor"),
+  authorize("Assessor", "Auditor"),
   validateRequest(AuditorDashboardAssessmentsQuerySchema),
   getAuditorDashboardAssessments
 );
@@ -161,6 +250,11 @@ router.get(
  *       200:
  *         description: Accessible organizations retrieved successfully
  */
-router.get("/auditor/organizations", authenticate, authorize("Auditor"), getAuditorOrganizations);
+router.get(
+  "/auditor/organizations",
+  authenticate,
+  authorize("Assessor", "Auditor"),
+  getAuditorOrganizations
+);
 
 export default router;

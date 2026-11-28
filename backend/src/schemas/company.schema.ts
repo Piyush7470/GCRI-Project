@@ -2,6 +2,23 @@ import { z } from "zod";
 
 const objectIdRegex = /^[0-9a-fA-F]{24}$/;
 
+const emptyToUndefined = (val: unknown) =>
+  typeof val === "string" && val.trim() === "" ? undefined : val;
+
+const optionalText = (max: number) =>
+  z.preprocess(emptyToUndefined, z.string().trim().max(max).optional());
+
+const PrimaryContactSchema = z
+  .object({
+    name: optionalText(120),
+    email: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().toLowerCase().email("Please provide a valid contact email").optional()
+    ),
+    phone: optionalText(30),
+  })
+  .optional();
+
 export const CreateCompanySchema = z.object({
   body: z.object({
     name: z.string().trim().min(2, "Company name must be at least 2 characters").max(120),
@@ -14,10 +31,22 @@ export const CreateCompanySchema = z.object({
         /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/,
         "Please provide a valid domain name"
       ),
-    registrationNumber: z.string().trim().max(60).optional(),
-    country: z.string().trim().min(2).max(100).optional(),
-    industry: z.string().trim().min(2).max(100).optional(),
+    registrationNumber: optionalText(60),
+    country: optionalText(100),
+    industry: optionalText(100),
     activePlan: z.enum(["Bronze", "Silver", "Gold"]).optional(),
+    tenantId: z
+      .string()
+      .regex(objectIdRegex, "Invalid tenant ID format")
+      .optional(),
+    primaryContact: PrimaryContactSchema,
+    user: z
+      .object({
+        name: z.string().trim().min(2, "Contact name must be at least 2 characters"),
+        email: z.string().trim().toLowerCase().email("Please provide a valid email address"),
+        password: z.string().min(8, "Password must be at least 8 characters").optional(),
+      })
+      .optional(),
   }),
 });
 
@@ -27,10 +56,11 @@ export const UpdateCompanySchema = z.object({
   }),
   body: z.object({
     name: z.string().trim().min(2).max(120).optional(),
-    registrationNumber: z.string().trim().max(60).optional(),
-    country: z.string().trim().min(2).max(100).optional(),
-    industry: z.string().trim().min(2).max(100).optional(),
+    registrationNumber: optionalText(60),
+    country: optionalText(100),
+    industry: optionalText(100),
     activePlan: z.enum(["Bronze", "Silver", "Gold"]).optional(),
+    primaryContact: PrimaryContactSchema,
   }),
 });
 
@@ -42,7 +72,6 @@ export const VerifyCompanySchema = z.object({
     verificationStatus: z.enum(["Verified", "Pending", "Rejected"], {
       message: "Status must be Verified, Pending, or Rejected",
     }),
-    activePlan: z.enum(["Bronze", "Silver", "Gold"]).optional(),
     notes: z.string().trim().max(500).optional(),
   }),
 });

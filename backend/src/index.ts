@@ -1,14 +1,29 @@
+import "dotenv/config";
+import "./bootstrap/sanitizeEnv.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
-import dotenv from "dotenv";
 import { connectDB } from "./config/db.js";
+import { ensureCloudinaryConfigured } from "./config/cloudinary.js";
 import v1Routes from "./routes/index.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 import { apiLimiter } from "./middlewares/rateLimiter.js";
+import { emailService } from "./services/email.service.js";
 
-dotenv.config();
+// Configure Cloudinary when credentials exist; never block startup if missing
+const cloudinaryStatus = ensureCloudinaryConfigured();
+if (!cloudinaryStatus.configured) {
+  console.warn(
+    "[cloudinary] credentials not set — image upload endpoints will return CLOUDINARY_NOT_CONFIGURED until CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET are provided"
+  );
+}
+
+if (!emailService.isReady()) {
+  console.warn(
+    "[email] SMTP not ready — set SMTP_HOST, SMTP_USER, SMTP_PASS (and SMTP_FROM or EMAIL_FROM) in .env"
+  );
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,9 +42,19 @@ app.use(
     },
   })
 );
+const defaultCorsOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "https://gcrai-fe.vercel.app",
+];
+const envCorsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(",").map((o) => o.trim()).filter(Boolean)
+  : [];
+const corsOrigins = [...new Set([...defaultCorsOrigins, ...envCorsOrigins])];
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
     credentials: true,
   })
 );
@@ -52,6 +77,20 @@ import("./services/s3.service.js").then(({ s3Service }) => {
 
 // API Routes
 app.use("/api/v1", apiLimiter, v1Routes);
+
+app.use((req, res) => {
+  if (req.originalUrl.startsWith("/api/")) {
+    return res.status(404).json({
+      success: false,
+      error: {
+        message: `Route not found: ${req.method} ${req.originalUrl}`,
+        code: "ROUTE_NOT_FOUND",
+        hint: "Restart the API after git pull and run npm run build in backend/. Analytics: GET /api/v1/dashboard/admin/analytics",
+      },
+    });
+  }
+  res.status(404).send(`Cannot ${req.method} ${req.originalUrl}`);
+});
 
 // Global Error Handler
 app.use(errorHandler);

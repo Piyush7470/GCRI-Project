@@ -4,23 +4,28 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { generateSecret, generateURI, verifySync } from "otplib";
 import QRCode from "qrcode";
-import { User } from "../models/User.js";
-import { TenantMembership } from "../models/TenantMembership.js";
+import { User, IUser } from "../models/User.js";
+import { Company } from "../models/Company.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import { AuditLog } from "../models/AuditLog.js";
-import { normalizeUserRole } from "../middlewares/auth.js";
+import { emailService } from "../services/email.service.js";
+import { normalizeUserRole, resolveUserTenantClaims } from "../middlewares/auth.js";
+import { TenantMembership } from "../models/TenantMembership.js";
 
 /**
- * Self-registration is disabled under the GCRAI Organizational Model.
- * Provisioning flows strictly top-down: SuperAdmin -> TenantAdmin -> Auditor.
+ * Register a new Assessor or User
  */
-export async function register(_req: Request, res: Response, _next: NextFunction) {
-  return sendError(
-    res,
-    "Self-registration is disabled. Accounts must be onboarded via invitation by a SuperAdmin or TenantAdmin.",
-    403,
-    "SELF_REGISTRATION_DISABLED"
-  );
+export async function register(req: Request, res: Response, next: NextFunction) {
+  try {
+    return sendError(
+      res,
+      "Self-registration is disabled. Please use your invitation link.",
+      403,
+      "SELF_REGISTRATION_DISABLED"
+    );
+  } catch (err) {
+    next(err);
+  }
 }
 
 /**
@@ -33,11 +38,6 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return sendError(res, "Invalid credentials", 401, "INVALID_CREDENTIALS");
-    }
-
-    const userRole = normalizeUserRole(user.role);
-    if (user.role !== userRole) {
-      user.role = userRole;
     }
 
     if (user.status === "Deactivated") {
@@ -72,17 +72,6 @@ export async function login(req: Request, res: Response, next: NextFunction) {
       return sendError(res, "Invalid credentials", 401, "INVALID_CREDENTIALS");
     }
 
-    // Resolve active tenant memberships
-    const memberships = await TenantMembership.find({
-      userId: user._id,
-      status: "Active",
-    }).select("tenantId role");
-    const tenantIds = memberships.map((m) => m.tenantId.toString());
-    if (user.tenantId && !tenantIds.includes(user.tenantId.toString())) {
-      tenantIds.push(user.tenantId.toString());
-    }
-    const primaryTenantId = user.tenantId?.toString() || tenantIds[0];
-
     // MFA Challenge if MFA is enabled on user account
     if (user.mfa?.enabled) {
       if (!mfaToken) {
@@ -91,9 +80,7 @@ export async function login(req: Request, res: Response, next: NextFunction) {
           {
             userId: user._id.toString(),
             email: user.email,
-            role: userRole,
-            tenantId: primaryTenantId,
-            tenantIds,
+            role: user.role,
             companyId: user.companyId?.toString(),
             scope: "mfa_pending",
           },
@@ -147,16 +134,19 @@ export async function login(req: Request, res: Response, next: NextFunction) {
         await user.save();
         return sendError(res, "Invalid MFA verification or recovery code", 401, "INVALID_MFA_TOKEN");
       }
-    } else if (userRole === "SuperAdmin" || userRole === "TenantAdmin") {
-      // MFA Enforcement for SuperAdmin and TenantAdmin Accounts
+    } else if (
+      user.role === "SuperAdmin" ||
+      user.role === "Admin" ||
+      user.role === "TenantAdmin"
+    ) {
+      // MFA Enforcement for SuperAdmin and Admin Accounts
+      // Administrative accounts without MFA enabled must complete enrollment
       const secret = process.env.JWT_SECRET || "default_jwt_secret_dev";
       const tempToken = jwt.sign(
         {
           userId: user._id.toString(),
           email: user.email,
-          role: userRole,
-          tenantId: primaryTenantId,
-          tenantIds,
+          role: user.role,
           companyId: user.companyId?.toString(),
           scope: "mfa_pending",
         },
@@ -179,6 +169,12 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     user.lastLogin = new Date();
     await user.save();
 
+    const { tenantId, tenantIds } = await resolveUserTenantClaims(
+      user._id.toString(),
+      user.tenantId
+    );
+    const canonicalRole = normalizeUserRole(user.role);
+
     const secret = process.env.JWT_SECRET || "default_jwt_secret_dev";
     const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
 
@@ -186,8 +182,8 @@ export async function login(req: Request, res: Response, next: NextFunction) {
       {
         userId: user._id.toString(),
         email: user.email,
-        role: userRole,
-        tenantId: primaryTenantId,
+        role: canonicalRole,
+        tenantId,
         tenantIds,
         companyId: user.companyId?.toString(),
         scope: "authenticated",
@@ -197,7 +193,6 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     );
 
     await AuditLog.create({
-      tenantId: primaryTenantId ? (user.tenantId || memberships[0]?.tenantId) : undefined,
       actorId: user._id,
       actorEmail: user.email,
       action: "USER_LOGIN",
@@ -213,10 +208,10 @@ export async function login(req: Request, res: Response, next: NextFunction) {
         userId: user._id,
         email: user.email,
         name: user.name,
-        role: userRole,
-        mfaEnabled: user.mfa?.enabled || false,
-        tenantId: primaryTenantId || null,
+        role: canonicalRole,
+        tenantId: tenantId || null,
         tenantIds,
+        mfaEnabled: user.mfa?.enabled || false,
         companyId: user.companyId || null,
       },
     });
@@ -227,6 +222,8 @@ export async function login(req: Request, res: Response, next: NextFunction) {
 
 /**
  * Step 1: Initiate MFA Setup (Generates TOTP secret and QR Code)
+ * Works for first-time enrollment and for Admin/SuperAdmin authenticator (re)configuration
+ * when MFA is already flagged enabled via recovery-code seed.
  */
 export async function setupMfa(req: Request, res: Response, next: NextFunction) {
   try {
@@ -234,6 +231,10 @@ export async function setupMfa(req: Request, res: Response, next: NextFunction) 
     const user = await User.findById(userId);
     if (!user) {
       return sendError(res, "User not found", 404, "USER_NOT_FOUND");
+    }
+
+    if (!user.mfa) {
+      user.mfa = { enabled: false };
     }
 
     const secret = generateSecret();
@@ -254,6 +255,10 @@ export async function setupMfa(req: Request, res: Response, next: NextFunction) 
       qrCodeUrl,
       issuer: serviceName,
       account: user.email,
+      reconfigure: Boolean(user.mfa.secret),
+      message: user.mfa.secret
+        ? "Scan the new QR code to reconfigure your authenticator. Confirm with a 6-digit code to activate."
+        : "Scan the QR code with your authenticator app, then confirm with a 6-digit code.",
     });
   } catch (err) {
     next(err);
@@ -297,32 +302,19 @@ export async function verifyMfa(req: Request, res: Response, next: NextFunction)
     const hashedRecoveryCodes: string[] = [];
 
     for (let i = 0; i < 8; i++) {
-      const code = crypto.randomBytes(4).toString("hex");
+      const code = crypto.randomBytes(4).toString("hex"); // e.g. "a9f8b2c1"
       unhashedRecoveryCodes.push(code);
       const hashed = await bcrypt.hash(code, 10);
       hashedRecoveryCodes.push(hashed);
     }
 
-    const userRole = normalizeUserRole(user.role);
-    user.role = userRole;
     user.mfa.enabled = true;
     user.mfa.secret = user.mfa.tempSecret;
     user.mfa.tempSecret = undefined;
     user.mfa.recoveryCodes = hashedRecoveryCodes;
     await user.save();
 
-    const memberships = await TenantMembership.find({
-      userId: user._id,
-      status: "Active",
-    }).select("tenantId");
-    const tenantIds = memberships.map((m) => m.tenantId.toString());
-    if (user.tenantId && !tenantIds.includes(user.tenantId.toString())) {
-      tenantIds.push(user.tenantId.toString());
-    }
-    const primaryTenantId = user.tenantId?.toString() || tenantIds[0];
-
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "MFA_ENABLED",
@@ -332,15 +324,23 @@ export async function verifyMfa(req: Request, res: Response, next: NextFunction)
       userAgent: req.headers["user-agent"],
     });
 
+    void emailService
+      .sendMfaAlert({
+        recipientEmail: user.email,
+        action: "ENABLED",
+        ipAddress: req.ip,
+      })
+      .catch((err) => {
+        console.error("[Auth] MFA alert email failed:", err);
+      });
+
     const secret = process.env.JWT_SECRET || "default_jwt_secret_dev";
     const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
     const fullToken = jwt.sign(
       {
         userId: user._id.toString(),
         email: user.email,
-        role: userRole,
-        tenantId: primaryTenantId,
-        tenantIds,
+        role: user.role,
         companyId: user.companyId?.toString(),
         scope: "authenticated",
       },
@@ -375,8 +375,7 @@ export async function disableMfa(req: Request, res: Response, next: NextFunction
       return sendError(res, "MFA is not currently enabled for this account", 400, "MFA_NOT_ENABLED");
     }
 
-    const userRole = normalizeUserRole(user.role);
-    if (userRole === "SuperAdmin" || userRole === "TenantAdmin") {
+    if (user.role === "SuperAdmin" || user.role === "Admin") {
       return sendError(
         res,
         "MFA is mandatory for Administrative accounts and cannot be disabled.",
@@ -410,7 +409,6 @@ export async function disableMfa(req: Request, res: Response, next: NextFunction
     await user.save();
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "MFA_DISABLED",
@@ -451,7 +449,6 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
     await user.save();
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "PASSWORD_RESET_REQUESTED",
@@ -461,8 +458,21 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
       userAgent: req.headers["user-agent"],
     });
 
-    if (process.env.NODE_ENV !== "production") {
+    const resetUrl = `${emailService.getAppBaseUrl()}/reset-password?token=${rawToken}`;
+    const mailResult = await emailService.sendPasswordReset({
+      recipientEmail: user.email,
+      resetUrl,
+      expiresInMinutes: 60,
+    });
+
+    if (!mailResult.success) {
+      console.error(`[Auth] Password reset email failed for ${user.email}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(`[Auth/Dev] Reset URL (email failed): ${resetUrl}`);
+      }
+    } else if (process.env.NODE_ENV !== "production" && mailResult.mocked) {
       console.log(`[Auth/Dev] Password Reset Token for ${user.email}: ${rawToken}`);
+      console.log(`[Auth/Dev] Reset URL: ${resetUrl}`);
     }
 
     return sendSuccess(res, {
@@ -505,7 +515,6 @@ export async function resetPassword(req: Request, res: Response, next: NextFunct
     await user.save();
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "PASSWORD_RESET_COMPLETED",
@@ -550,7 +559,6 @@ export async function changePassword(req: Request, res: Response, next: NextFunc
     await user.save();
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "PASSWORD_CHANGED",
@@ -570,46 +578,38 @@ export async function changePassword(req: Request, res: Response, next: NextFunc
 
 /**
  * Google OAuth / OIDC ID token authentication
- * Only authenticates pre-invited users; Client Organizations have no login.
  */
 export async function oauthGoogle(req: Request, res: Response, next: NextFunction) {
   try {
-    const { idToken, mock, email: mockEmail } = req.body;
+    const { idToken, mock, email: mockEmail, name: mockName } = req.body;
 
     if (!idToken) {
       return sendError(res, "Google idToken is required", 400, "ID_TOKEN_REQUIRED");
     }
 
     let verifiedEmail: string;
+    let verifiedName: string;
     let verifiedSub: string;
 
     const googleClientId = process.env.GOOGLE_CLIENT_ID;
 
     if (googleClientId) {
-      const response = await fetch(
-        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
-      );
+      // Production verification against Google tokeninfo endpoint
+      const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`);
       if (!response.ok) {
         return sendError(res, "Invalid Google ID token", 401, "INVALID_OAUTH_TOKEN");
       }
-      const data = (await response.json()) as {
-        email?: string;
-        name?: string;
-        sub?: string;
-        aud?: string;
-      };
+      const data = (await response.json()) as { email?: string; name?: string; sub?: string; aud?: string };
       if (!data.email || (data.aud && data.aud !== googleClientId)) {
-        return sendError(
-          res,
-          "Google token audience mismatch or email missing",
-          401,
-          "OAUTH_AUDIENCE_MISMATCH"
-        );
+        return sendError(res, "Google token audience mismatch or email missing", 401, "OAUTH_AUDIENCE_MISMATCH");
       }
       verifiedEmail = data.email.toLowerCase();
+      verifiedName = data.name || "Google User";
       verifiedSub = data.sub || "";
     } else if (mock && mockEmail) {
+      // Development mock bypass for testing
       verifiedEmail = mockEmail.toLowerCase();
+      verifiedName = mockName || "Mock Google User";
       verifiedSub = `mock-google-sub-${Date.now()}`;
     } else {
       return sendError(
@@ -620,36 +620,36 @@ export async function oauthGoogle(req: Request, res: Response, next: NextFunctio
       );
     }
 
-    const user = await User.findOne({ email: verifiedEmail });
+    // Find or link user
+    let user = await User.findOne({ email: verifiedEmail });
     if (!user) {
-      return sendError(
-        res,
-        "No invited account found for this email address. Accounts must be onboarded by a Tenant Admin.",
-        403,
-        "ACCOUNT_NOT_INVITED"
-      );
-    }
+      // Auto-provision if company domain matches
+      const domain = verifiedEmail.split("@")[1];
+      const company = await Company.findOne({ domain });
+      if (!company) {
+        return sendError(
+          res,
+          "No registered organization found for this domain. Please contact your administrator.",
+          404,
+          "ORGANIZATION_NOT_FOUND"
+        );
+      }
 
-    if (user.status === "Deactivated") {
-      return sendError(res, "Account is deactivated", 403, "ACCOUNT_DEACTIVATED");
+      user = await User.create({
+        email: verifiedEmail,
+        name: verifiedName,
+        role: "Assessor",
+        status: "Active",
+        companyId: company._id,
+        authProvider: "google",
+        oauthId: verifiedSub,
+      });
+    } else {
+      user.authProvider = "google";
+      user.oauthId = verifiedSub;
+      user.lastLogin = new Date();
+      await user.save();
     }
-
-    const userRole = normalizeUserRole(user.role);
-    user.role = userRole;
-    user.authProvider = "google";
-    user.oauthId = verifiedSub;
-    user.lastLogin = new Date();
-    await user.save();
-
-    const memberships = await TenantMembership.find({
-      userId: user._id,
-      status: "Active",
-    }).select("tenantId");
-    const tenantIds = memberships.map((m) => m.tenantId.toString());
-    if (user.tenantId && !tenantIds.includes(user.tenantId.toString())) {
-      tenantIds.push(user.tenantId.toString());
-    }
-    const primaryTenantId = user.tenantId?.toString() || tenantIds[0];
 
     const secret = process.env.JWT_SECRET || "default_jwt_secret_dev";
     const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
@@ -658,9 +658,7 @@ export async function oauthGoogle(req: Request, res: Response, next: NextFunctio
       {
         userId: user._id.toString(),
         email: user.email,
-        role: userRole,
-        tenantId: primaryTenantId,
-        tenantIds,
+        role: user.role,
         companyId: user.companyId?.toString(),
         scope: "authenticated",
       },
@@ -669,7 +667,6 @@ export async function oauthGoogle(req: Request, res: Response, next: NextFunctio
     );
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "OAUTH_LOGIN",
@@ -686,9 +683,7 @@ export async function oauthGoogle(req: Request, res: Response, next: NextFunctio
         userId: user._id,
         email: user.email,
         name: user.name,
-        role: userRole,
-        tenantId: primaryTenantId || null,
-        tenantIds,
+        role: user.role,
         companyId: user.companyId,
         authProvider: "google",
       },
@@ -700,17 +695,17 @@ export async function oauthGoogle(req: Request, res: Response, next: NextFunctio
 
 /**
  * Microsoft OAuth / OIDC ID token authentication
- * Only authenticates pre-invited users; Client Organizations have no login.
  */
 export async function oauthMicrosoft(req: Request, res: Response, next: NextFunction) {
   try {
-    const { idToken, mock, email: mockEmail } = req.body;
+    const { idToken, mock, email: mockEmail, name: mockName } = req.body;
 
     if (!idToken) {
       return sendError(res, "Microsoft idToken is required", 400, "ID_TOKEN_REQUIRED");
     }
 
     let verifiedEmail: string;
+    let verifiedName: string;
     let verifiedSub: string;
 
     const msClientId = process.env.MICROSOFT_CLIENT_ID;
@@ -724,9 +719,11 @@ export async function oauthMicrosoft(req: Request, res: Response, next: NextFunc
       }
       const data = (await response.json()) as { email?: string; name?: string; sub?: string };
       verifiedEmail = (data.email || "").toLowerCase();
+      verifiedName = data.name || "Microsoft User";
       verifiedSub = data.sub || "";
     } else if (mock && mockEmail) {
       verifiedEmail = mockEmail.toLowerCase();
+      verifiedName = mockName || "Mock Microsoft User";
       verifiedSub = `mock-ms-sub-${Date.now()}`;
     } else {
       return sendError(
@@ -737,36 +734,34 @@ export async function oauthMicrosoft(req: Request, res: Response, next: NextFunc
       );
     }
 
-    const user = await User.findOne({ email: verifiedEmail });
+    let user = await User.findOne({ email: verifiedEmail });
     if (!user) {
-      return sendError(
-        res,
-        "No invited account found for this email address. Accounts must be onboarded by a Tenant Admin.",
-        403,
-        "ACCOUNT_NOT_INVITED"
-      );
-    }
+      const domain = verifiedEmail.split("@")[1];
+      const company = await Company.findOne({ domain });
+      if (!company) {
+        return sendError(
+          res,
+          "No registered organization found for this domain. Please contact your administrator.",
+          404,
+          "ORGANIZATION_NOT_FOUND"
+        );
+      }
 
-    if (user.status === "Deactivated") {
-      return sendError(res, "Account is deactivated", 403, "ACCOUNT_DEACTIVATED");
+      user = await User.create({
+        email: verifiedEmail,
+        name: verifiedName,
+        role: "Assessor",
+        status: "Active",
+        companyId: company._id,
+        authProvider: "microsoft",
+        oauthId: verifiedSub,
+      });
+    } else {
+      user.authProvider = "microsoft";
+      user.oauthId = verifiedSub;
+      user.lastLogin = new Date();
+      await user.save();
     }
-
-    const userRole = normalizeUserRole(user.role);
-    user.role = userRole;
-    user.authProvider = "microsoft";
-    user.oauthId = verifiedSub;
-    user.lastLogin = new Date();
-    await user.save();
-
-    const memberships = await TenantMembership.find({
-      userId: user._id,
-      status: "Active",
-    }).select("tenantId");
-    const tenantIds = memberships.map((m) => m.tenantId.toString());
-    if (user.tenantId && !tenantIds.includes(user.tenantId.toString())) {
-      tenantIds.push(user.tenantId.toString());
-    }
-    const primaryTenantId = user.tenantId?.toString() || tenantIds[0];
 
     const secret = process.env.JWT_SECRET || "default_jwt_secret_dev";
     const expiresIn = process.env.JWT_EXPIRES_IN || "7d";
@@ -775,9 +770,7 @@ export async function oauthMicrosoft(req: Request, res: Response, next: NextFunc
       {
         userId: user._id.toString(),
         email: user.email,
-        role: userRole,
-        tenantId: primaryTenantId,
-        tenantIds,
+        role: user.role,
         companyId: user.companyId?.toString(),
         scope: "authenticated",
       },
@@ -786,7 +779,6 @@ export async function oauthMicrosoft(req: Request, res: Response, next: NextFunc
     );
 
     await AuditLog.create({
-      tenantId: user.tenantId,
       actorId: user._id,
       actorEmail: user.email,
       action: "OAUTH_LOGIN",
@@ -803,9 +795,7 @@ export async function oauthMicrosoft(req: Request, res: Response, next: NextFunc
         userId: user._id,
         email: user.email,
         name: user.name,
-        role: userRole,
-        tenantId: primaryTenantId || null,
-        tenantIds,
+        role: user.role,
         companyId: user.companyId,
         authProvider: "microsoft",
       },

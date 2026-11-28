@@ -1,12 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
+import { Types } from "mongoose";
 import { ApiKey } from "../models/ApiKey.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 import { Company } from "../models/Company.js";
+import { getAssignedOrganizationIds } from "../middlewares/companyScope.js";
+import { isTenantAdminRole } from "../middlewares/auth.js";
+
+async function resolveTenantCompanyIds(req: Request): Promise<Types.ObjectId[]> {
+  if (!req.user?.userId || !isTenantAdminRole(req.user.role)) return [];
+  return getAssignedOrganizationIds(req.user.userId, req.user.tenantId);
+}
 
 /**
- * Generate a new Machine-to-Machine (M2M) API Key
+ * Generate a new Machine-to-Machine (M2M) API Key (Tenant Admin module)
  */
 export async function createApiKey(req: Request, res: Response, next: NextFunction) {
   try {
@@ -21,20 +29,16 @@ export async function createApiKey(req: Request, res: Response, next: NextFuncti
       return sendError(res, "Company not found", 404, "COMPANY_NOT_FOUND");
     }
 
-    if (
-      req.user?.role === "TenantAdmin" &&
-      company.tenantId &&
-      company.tenantId.toString() !== req.user.tenantId
-    ) {
+    const allowedOrgIds = await resolveTenantCompanyIds(req);
+    if (!allowedOrgIds.some((id) => id.toString() === companyId.toString())) {
       return sendError(
         res,
-        "Access denied. You can only create API keys for client organizations in your own tenant.",
+        "Access denied. You can only create API keys for organizations in your tenant.",
         403,
         "CROSS_TENANT_ACCESS_DENIED"
       );
     }
 
-    // Generate cryptographic key: prefix + secret
     const prefix = `grc_${crypto.randomBytes(4).toString("hex")}`;
     const rawSecret = crypto.randomBytes(24).toString("hex");
     const fullKey = `${prefix}_${rawSecret}`;
@@ -49,7 +53,6 @@ export async function createApiKey(req: Request, res: Response, next: NextFuncti
       name,
       prefix,
       keyHash,
-      tenantId: company.tenantId || req.user?.tenantId,
       companyId: company._id,
       role,
       permissions,
@@ -59,7 +62,6 @@ export async function createApiKey(req: Request, res: Response, next: NextFuncti
     });
 
     await AuditLog.create({
-      tenantId: company.tenantId || req.user?.tenantId,
       actorId: req.user!.userId,
       actorEmail: req.user!.email,
       action: "API_KEY_CREATED",
@@ -73,12 +75,13 @@ export async function createApiKey(req: Request, res: Response, next: NextFuncti
     return sendSuccess(
       res,
       {
-        message: "API key generated successfully. Store this secret securely; it will NOT be displayed again.",
+        message:
+          "API key generated successfully. Store this secret securely; it will NOT be displayed again.",
         apiKey: {
           id: apiKey._id,
           name: apiKey.name,
           prefix: apiKey.prefix,
-          rawKey: fullKey, // Secret shown only once
+          rawKey: fullKey,
           role: apiKey.role,
           companyId: apiKey.companyId,
           expiresAt: apiKey.expiresAt,
@@ -93,19 +96,31 @@ export async function createApiKey(req: Request, res: Response, next: NextFuncti
 }
 
 /**
- * List active API keys (excluding secret hashes)
+ * List API keys for organizations in the active tenant
  */
 export async function listApiKeys(req: Request, res: Response, next: NextFunction) {
   try {
     const { companyId } = req.query;
-    const filter: Record<string, unknown> = {};
-
-    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
-      filter.tenantId = req.user.tenantId;
+    const allowedOrgIds = await resolveTenantCompanyIds(req);
+    if (allowedOrgIds.length === 0) {
+      return sendSuccess(res, { keys: [] });
     }
 
+    const filter: Record<string, unknown> = {
+      companyId: { $in: allowedOrgIds },
+    };
+
     if (companyId) {
-      filter.companyId = companyId;
+      const requested = String(companyId);
+      if (!allowedOrgIds.some((id) => id.toString() === requested)) {
+        return sendError(
+          res,
+          "Access denied. Organization is outside your tenant scope.",
+          403,
+          "CROSS_TENANT_ACCESS_DENIED"
+        );
+      }
+      filter.companyId = requested;
     }
 
     const keys = await ApiKey.find(filter)
@@ -120,7 +135,7 @@ export async function listApiKeys(req: Request, res: Response, next: NextFunctio
 }
 
 /**
- * Revoke/Deactivate an API Key
+ * Revoke/Deactivate an API Key in the active tenant
  */
 export async function revokeApiKey(req: Request, res: Response, next: NextFunction) {
   try {
@@ -129,6 +144,16 @@ export async function revokeApiKey(req: Request, res: Response, next: NextFuncti
 
     if (!key) {
       return sendError(res, "API key not found", 404, "API_KEY_NOT_FOUND");
+    }
+
+    const allowedOrgIds = await resolveTenantCompanyIds(req);
+    if (!allowedOrgIds.some((id) => id.toString() === key.companyId.toString())) {
+      return sendError(
+        res,
+        "Access denied. You can only revoke API keys for organizations in your tenant.",
+        403,
+        "CROSS_TENANT_ACCESS_DENIED"
+      );
     }
 
     key.isActive = false;

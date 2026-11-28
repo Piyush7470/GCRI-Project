@@ -8,9 +8,14 @@ import {
   updateCompanyStatus,
   getCompanyTrends,
 } from "../controllers/company.controller.js";
+import {
+  uploadCompanyLogo,
+  deleteCompanyLogo,
+} from "../controllers/companyLogo.controller.js";
 import { authenticate, authorize } from "../middlewares/auth.js";
 import { requireCompanyScope } from "../middlewares/companyScope.js";
 import { validateRequest } from "../middlewares/validate.js";
+import { handleImageUpload } from "../middlewares/imageUpload.js";
 import {
   CreateCompanySchema,
   UpdateCompanySchema,
@@ -25,22 +30,51 @@ const router = Router();
  * @openapi
  * /api/v1/companies:
  *   post:
- *     summary: Onboard a new Client Organization (TenantAdmin only)
- *     description: Creates a Client Organization within the TenantAdmin's tenant with name, domain, plan tier (Gold, Silver, Bronze), industry, and country, and triggers DNS verification.
+ *     summary: Onboard a new organization
+ *     description: Creates a company profile, triggers automated DNS domain legitimacy verification, and associates unassigned Assessors with the new company.
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - domain
+ *             properties:
+ *               name:
+ *                 type: string
+ *                 example: Acme AI Corporation
+ *               domain:
+ *                 type: string
+ *                 example: acme-ai.com
+ *               registrationNumber:
+ *                 type: string
+ *                 example: REG-2026-9921
+ *               country:
+ *                 type: string
+ *                 example: United States
+ *               industry:
+ *                 type: string
+ *                 example: FinTech / AI
  *     responses:
  *       201:
- *         description: Client Organization onboarded successfully
- *       403:
- *         description: TenantAdmin role required
+ *         description: Company onboarded successfully
+ *       400:
+ *         description: Invalid input or domain format
+ *       409:
+ *         description: Domain already onboarded
+ *       401:
+ *         description: Unauthorized
  */
 router.post(
   "/",
   authenticate,
-  authorize("TenantAdmin"),
+  authorize("SuperAdmin", "TenantAdmin", "Admin"),
   validateRequest(CreateCompanySchema),
   createCompany
 );
@@ -49,35 +83,72 @@ router.post(
  * @openapi
  * /api/v1/companies:
  *   get:
- *     summary: List Client Organizations in the active tenant
- *     description: Visible only to the owning tenant's TenantAdmins and Auditors.
+ *     summary: List companies
+ *     description: Lists companies with pagination and search. Assessors only see their assigned company; Admins see all.
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [Active, Suspended]
+ *       - in: query
+ *         name: verificationStatus
+ *         schema:
+ *           type: string
+ *           enum: [Verified, Pending, Rejected]
  *     responses:
  *       200:
- *         description: Paginated Client Organization list
+ *         description: Paginated company list
+ *       401:
+ *         description: Unauthorized
  */
-router.get("/", authenticate, authorize("TenantAdmin", "Auditor"), getCompanies);
+router.get("/", authenticate, authorize("TenantAdmin", "Admin", "Auditor", "Assessor"), getCompanies);
 
 /**
  * @openapi
  * /api/v1/companies/{id}:
  *   get:
- *     summary: Get Client Organization profile by ID
+ *     summary: Get company profile by ID
+ *     description: Retrieves company profile. Strictly protected by tenant isolation guards (IDOR prevention).
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
- *         description: Client Organization profile
+ *         description: Company profile
+ *       403:
+ *         description: Cross-company access denied
+ *       404:
+ *         description: Company not found
  */
 router.get(
   "/:id",
   authenticate,
-  authorize("TenantAdmin", "Auditor"),
   validateRequest(CompanyParamSchema),
   requireCompanyScope("id"),
   getCompanyById
@@ -87,19 +158,43 @@ router.get(
  * @openapi
  * /api/v1/companies/{id}:
  *   patch:
- *     summary: Update Client Organization profile or plan tier (TenantAdmin only)
+ *     summary: Update company profile
+ *     description: Updates company metadata. Guarded by tenant isolation policies.
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               registrationNumber:
+ *                 type: string
+ *               country:
+ *                 type: string
+ *               industry:
+ *                 type: string
  *     responses:
  *       200:
- *         description: Client Organization profile updated
+ *         description: Company profile updated
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Company not found
  */
 router.patch(
   "/:id",
   authenticate,
-  authorize("TenantAdmin"),
   validateRequest(UpdateCompanySchema),
   requireCompanyScope("id"),
   updateCompany
@@ -107,23 +202,134 @@ router.patch(
 
 /**
  * @openapi
- * /api/v1/companies/{id}/verify:
+ * /api/v1/companies/{id}/logo:
  *   post:
- *     summary: Verify Client Organization DNS legitimacy and set plan tier (TenantAdmin only)
+ *     summary: Upload or replace organization logo
+ *     description: |
+ *       Authenticated, backend-mediated Cloudinary upload (JPEG/PNG/WebP, max 5 MB).
+ *       Authorization mirrors organization profile updates (tenant-scoped).
+ *       SuperAdmin: any organization. Admin: own organization. Assessor: assigned organization only.
+ *       Returns 503 CLOUDINARY_NOT_CONFIGURED when Cloudinary env vars are missing.
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - file
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *                 description: JPEG, PNG, or WebP image (max 5 MB)
+ *     responses:
+ *       200:
+ *         description: Logo uploaded
+ *       400:
+ *         description: Invalid image or validation failure
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Cross-organization access denied
+ *       409:
+ *         description: Concurrent logo update conflict
+ *       503:
+ *         description: Cloudinary credentials not configured
+ *   delete:
+ *     summary: Remove organization logo
+ *     description: Clears logo metadata in MongoDB and deletes the Cloudinary asset using the server-stored public ID.
+ *     tags:
+ *       - Company Management
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Logo removed
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
+ *       404:
+ *         description: Company not found
+ */
+router.post(
+  "/:id/logo",
+  authenticate,
+  validateRequest(CompanyParamSchema),
+  requireCompanyScope("id"),
+  handleImageUpload,
+  uploadCompanyLogo
+);
+
+router.delete(
+  "/:id/logo",
+  authenticate,
+  validateRequest(CompanyParamSchema),
+  requireCompanyScope("id"),
+  deleteCompanyLogo
+);
+
+/**
+ * @openapi
+ * /api/v1/companies/{id}/verify:
+ *   post:
+ *     summary: Manually verify or reject company legitimacy (Admin only)
+ *     description: Admin override to transition company legitimacy to Verified, Rejected, or Pending with audit notes.
+ *     tags:
+ *       - Company Management
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - verificationStatus
+ *             properties:
+ *               verificationStatus:
+ *                 type: string
+ *                 enum: [Verified, Pending, Rejected]
+ *               notes:
+ *                 type: string
+ *                 example: Verified business registration via official state portal.
  *     responses:
  *       200:
  *         description: Verification status updated
+ *       403:
+ *         description: Admin role required
+ *       404:
+ *         description: Company not found
  */
 router.post(
   "/:id/verify",
   authenticate,
-  authorize("TenantAdmin"),
+  authorize("SuperAdmin"),
   validateRequest(VerifyCompanySchema),
-  requireCompanyScope("id"),
   verifyCompany
 );
 
@@ -131,21 +337,43 @@ router.post(
  * @openapi
  * /api/v1/companies/{id}/status:
  *   patch:
- *     summary: Update Client Organization operational status (Active / Suspended) (TenantAdmin only)
+ *     summary: Update company operational status (Active / Suspended) (Admin only)
+ *     description: Suspends or reactivates a company across the assessment platform.
  *     tags:
  *       - Company Management
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [Active, Suspended]
+ *               reason:
+ *                 type: string
  *     responses:
  *       200:
  *         description: Status updated
+ *       403:
+ *         description: Admin role required
  */
 router.patch(
   "/:id/status",
   authenticate,
-  authorize("TenantAdmin"),
+  authorize("SuperAdmin"),
   validateRequest(UpdateCompanyStatusSchema),
-  requireCompanyScope("id"),
   updateCompanyStatus
 );
 
@@ -153,22 +381,32 @@ router.patch(
  * @openapi
  * /api/v1/companies/{id}/trends:
  *   get:
- *     summary: Retrieve historical assessment trends and score progression for a Client Organization
+ *     summary: Retrieve historical assessment trends and score progression for an organization
+ *     description: Returns sequential assessment scores, maturity level progression, and delta improvement percentage across finalized assessments.
  *     tags:
  *       - Assessment Analytics
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
  *     responses:
  *       200:
  *         description: Historical trend progression retrieved successfully
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Company not found
  */
 router.get(
   "/:id/trends",
   authenticate,
-  authorize("TenantAdmin", "Auditor"),
   validateRequest(CompanyParamSchema),
-  requireCompanyScope("id"),
   getCompanyTrends
 );
 
 export default router;
+

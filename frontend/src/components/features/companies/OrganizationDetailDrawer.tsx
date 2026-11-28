@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   X,
@@ -28,8 +28,16 @@ import {
   ChevronRight,
   Check,
   Save,
+  MoreVertical,
 } from "lucide-react";
 import { Company, SubscriptionTier } from "@/types/company.types";
+import { fieldPlaceholder } from "@/lib/formPlaceholders";
+import { AsyncSearchSelect } from "@/components/ui/AsyncSearchSelect";
+import {
+  loadCountryOptions,
+  loadIndustryOptions,
+  loadUserPicklist,
+} from "@/lib/searchSelectLoaders";
 import { User as UserType } from "@/types/auth.types";
 import { AssessmentSession } from "@/types/assessment.types";
 import { OrgAuditorItem } from "@/types/auditorMapping.types";
@@ -38,6 +46,9 @@ import { assessmentService } from "@/services/assessment.service";
 import { userService } from "@/services/user.service";
 import { companyService } from "@/services/company.service";
 import Modal, { ConfirmationVariant } from "@/components/ui/Modal";
+import { ScreenBusyOverlay } from "@/components/shared/ScreenBusyOverlay";
+import { EntityImage } from "@/components/shared/EntityImage";
+import { ImageUploader } from "@/components/shared/ImageUploader";
 
 interface OrganizationDetailDrawerProps {
   company: Company | null;
@@ -56,9 +67,13 @@ export default function OrganizationDetailDrawer({
 }: OrganizationDetailDrawerProps) {
   const [activeTab, setActiveTab] = useState<TabType>("overview");
   const [company, setCompany] = useState<Company | null>(initialCompany);
+  const [profileRefreshing, setProfileRefreshing] = useState(false);
 
   // Fetch fresh company profile (including clientUser from backend)
+  const loadAssessorOptions = useMemo(() => loadUserPicklist("Assessor"), []);
+
   const fetchFreshCompany = useCallback(async (id: string) => {
+    setProfileRefreshing(true);
     try {
       const res = await companyService.getCompanyById(id);
       if (res?.data) {
@@ -66,6 +81,8 @@ export default function OrganizationDetailDrawer({
       }
     } catch (err) {
       console.error("Failed to load enriched company details:", err);
+    } finally {
+      setProfileRefreshing(false);
     }
   }, []);
 
@@ -80,7 +97,7 @@ export default function OrganizationDetailDrawer({
         country: initialCompany.country || "",
         size: initialCompany.size || "500 - 1,000 employees",
         registrationNumber: initialCompany.registrationNumber || "",
-        subscriptionTier: initialCompany.subscriptionTier || initialCompany.activePlan || "Gold",
+        subscriptionTier: initialCompany.activePlan || "Gold",
       });
       if (initialCompany._id) {
         fetchFreshCompany(initialCompany._id);
@@ -88,8 +105,9 @@ export default function OrganizationDetailDrawer({
     }
   }, [initialCompany, fetchFreshCompany]);
 
-  // Inline Direct Edit State
-  const [isEditing, setIsEditing] = useState(false);
+  // Edit Profile modal (Actions → Edit Profile)
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState(false);
@@ -100,7 +118,7 @@ export default function OrganizationDetailDrawer({
     country: initialCompany?.country || "",
     size: initialCompany?.size || "500 - 1,000 employees",
     registrationNumber: initialCompany?.registrationNumber || "",
-    subscriptionTier: initialCompany?.subscriptionTier || initialCompany?.activePlan || "Gold",
+    subscriptionTier: initialCompany?.activePlan || "Gold",
   });
 
   // Reusable Confirmation Dialog Modal State
@@ -152,8 +170,9 @@ export default function OrganizationDetailDrawer({
     }
   }, [company?._id]);
 
-  // Fetch All Assessors (for assignment dropdown)
+  // Fetch All Assessors (for assignment dropdown - Admin only)
   const fetchAvailableAssessors = useCallback(async () => {
+    if (!isAdmin) return;
     try {
       const res = await userService.getUsers({ limit: 100, role: "Assessor" });
       if (res?.data) {
@@ -162,7 +181,7 @@ export default function OrganizationDetailDrawer({
     } catch (err) {
       console.error("Failed to fetch assessors:", err);
     }
-  }, []);
+  }, [isAdmin]);
 
   // Fetch Company Assessments
   const fetchCompanyAssessments = useCallback(async () => {
@@ -180,19 +199,23 @@ export default function OrganizationDetailDrawer({
     }
   }, [company?._id]);
 
-  // Load data when company or tab changes
   useEffect(() => {
-    if (company?._id) {
+    if (!company?._id) return;
+    if (activeTab === "people") {
       fetchAssignedAuditors();
+      if (showAssignForm) fetchAvailableAssessors();
+    }
+    if (activeTab === "assessments") {
       fetchCompanyAssessments();
     }
-  }, [company?._id, fetchAssignedAuditors, fetchCompanyAssessments]);
-
-  useEffect(() => {
-    if (activeTab === "people") {
-      fetchAvailableAssessors();
-    }
-  }, [activeTab, fetchAvailableAssessors]);
+  }, [
+    company?._id,
+    activeTab,
+    showAssignForm,
+    fetchAssignedAuditors,
+    fetchCompanyAssessments,
+    fetchAvailableAssessors,
+  ]);
 
   if (!company) return null;
 
@@ -204,21 +227,19 @@ export default function OrganizationDetailDrawer({
     setEditError(null);
 
     try {
+      // UpdateCompanySchema: name, registrationNumber, country, industry only.
+      // Domain, size, and activePlan are not mutable via this endpoint.
       const updatedRes = await companyService.updateCompany(company._id, {
         name: editForm.name.trim(),
-        domain: editForm.domain.trim().toLowerCase(),
         industry: editForm.industry.trim() || undefined,
         country: editForm.country.trim() || undefined,
-        size: editForm.size.trim() || undefined,
         registrationNumber: editForm.registrationNumber.trim() || undefined,
-        subscriptionTier: editForm.subscriptionTier,
       });
 
       if (updatedRes?.data) {
         setCompany((prev) => ({
           ...updatedRes.data,
           clientUser: prev?.clientUser || updatedRes.data.clientUser,
-          size: editForm.size.trim() || updatedRes.data.size,
         }));
       } else {
         setCompany((prev) =>
@@ -226,18 +247,15 @@ export default function OrganizationDetailDrawer({
             ? {
                 ...prev,
                 name: editForm.name.trim(),
-                domain: editForm.domain.trim().toLowerCase(),
                 industry: editForm.industry.trim() || undefined,
                 country: editForm.country.trim() || undefined,
-                size: editForm.size.trim() || undefined,
                 registrationNumber: editForm.registrationNumber.trim() || undefined,
-                subscriptionTier: editForm.subscriptionTier,
               }
             : null
         );
       }
 
-      setIsEditing(false);
+      setEditModalOpen(false);
       setEditSuccess(true);
       setTimeout(() => setEditSuccess(false), 3000);
       onRefreshCompany?.();
@@ -253,8 +271,7 @@ export default function OrganizationDetailDrawer({
     }
   };
 
-  // Cancel Inline Edit
-  const handleCancelInlineEdit = () => {
+  const openEditProfileModal = () => {
     setEditForm({
       name: company.name,
       domain: company.domain,
@@ -262,10 +279,16 @@ export default function OrganizationDetailDrawer({
       country: company.country || "",
       size: company.size || "500 - 1,000 employees",
       registrationNumber: company.registrationNumber || "",
-      subscriptionTier: company.subscriptionTier || company.activePlan || "Gold",
+      subscriptionTier: company.activePlan || "Gold",
     });
     setEditError(null);
-    setIsEditing(false);
+    setActionsMenuOpen(false);
+    setEditModalOpen(true);
+  };
+
+  const handleCancelEditProfile = () => {
+    setEditError(null);
+    setEditModalOpen(false);
   };
 
   // Handle Assign Auditor
@@ -332,20 +355,25 @@ export default function OrganizationDetailDrawer({
   };
 
   // Assessment Metrics
-  const completedCount = assessments.filter((a) => a.status === "Completed").length;
-  const inProgressCount = assessments.filter((a) => a.status === "InProgress" || a.status === "Submitted").length;
+  const completedCount = assessments.filter((a) => a.status === "Submitted").length;
+  const inProgressCount = assessments.filter((a) => a.status === "InProgress").length;
   const latestAssessment = assessments[0] || null;
 
   return (
-    <div className="w-[390px] xl:w-[420px] bg-white border-l border-slate-200/90 flex flex-col h-full shrink-0 shadow-xl z-20 animate-in slide-in-from-right duration-200">
+    <div className="relative w-[390px] xl:w-[420px] bg-white border-l border-slate-200/90 flex flex-col h-full shrink-0 shadow-xl z-20 animate-in slide-in-from-right duration-200">
+      <ScreenBusyOverlay show={profileRefreshing} label="Updating organization…" />
       {/* Header (Matching Reference Screen 4) */}
       <div className="p-4 border-b border-slate-200/80 bg-slate-50/40">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            {/* Logo Avatar */}
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-teal-500 via-cyan-600 to-blue-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0 shadow-2xs">
-              {company.name.slice(0, 2).toUpperCase()}
-            </div>
+            <EntityImage
+              src={company.logo?.url}
+              name={company.name}
+              variant="logo"
+              size="md"
+              cacheKey={company.updatedAt || company.logo?.publicId}
+              className="h-10 w-10"
+            />
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="font-extrabold text-slate-900 text-sm truncate leading-tight">
@@ -373,21 +401,6 @@ export default function OrganizationDetailDrawer({
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            {/* Direct Edit Toggle Button in Header */}
-            <button
-              onClick={() => {
-                setActiveTab("overview");
-                setIsEditing(!isEditing);
-              }}
-              title={isEditing ? "Close Edit" : "Edit Organization Directly"}
-              className={`p-1.5 rounded-lg transition ${
-                isEditing
-                  ? "bg-teal-50 text-teal-700 border border-teal-200"
-                  : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <Edit3 className="h-3.5 w-3.5" />
-            </button>
             <button
               onClick={onClose}
               title="Close Drawer"
@@ -465,244 +478,168 @@ export default function OrganizationDetailDrawer({
 
             {/* Organization Details Card */}
             <div className="bg-slate-50/60 rounded-xl border border-slate-200/90 p-3.5 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                   <Building2 className="h-3.5 w-3.5 text-teal-600" />
-                  {isEditing ? "Edit Organization (Direct)" : "Organization Details"}
+                  Organization Details
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal-600 hover:text-teal-700 transition"
-                >
-                  <Edit3 className="h-3 w-3" />
-                  {isEditing ? "Cancel" : "Edit"}
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setActionsMenuOpen((open) => !open)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:text-teal-700 border border-slate-200 bg-white hover:border-teal-200 rounded-lg transition"
+                    aria-haspopup="menu"
+                    aria-expanded={actionsMenuOpen}
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" />
+                    Actions
+                  </button>
+                  {actionsMenuOpen && (
+                    <>
+                      <button
+                        type="button"
+                        className="fixed inset-0 z-10 cursor-default"
+                        aria-label="Close actions menu"
+                        onClick={() => setActionsMenuOpen(false)}
+                      />
+                      <div className="absolute right-0 top-full mt-1 z-20 min-w-[150px] rounded-lg border border-slate-200 bg-white shadow-lg py-1">
+                        <button
+                          type="button"
+                          onClick={openEditProfileModal}
+                          className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-800 hover:bg-teal-50 hover:text-teal-800 inline-flex items-center gap-2"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                          Edit Profile
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
-              {isEditing ? (
-                /* Direct Inline Form - No Popup Dialog */
-                <form onSubmit={handleSaveInlineEdit} className="space-y-3 pt-1 animate-in fade-in">
-                  {editError && (
-                    <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
-                      {editError}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Legal Name *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={editForm.name}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Primary Domain *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={editForm.domain}
-                      onChange={(e) => setEditForm({ ...editForm, domain: e.target.value })}
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Industry
-                      </label>
-                      <input
-                        type="text"
-                        value={editForm.industry}
-                        onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
-                        placeholder="e.g. Technology"
-                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Company Size
-                      </label>
-                      <input
-                        type="text"
-                        value={editForm.size}
-                        onChange={(e) => setEditForm({ ...editForm, size: e.target.value })}
-                        placeholder="e.g. 500 - 1,000 employees"
-                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                      Country / Address
-                    </label>
-                    <input
-                      type="text"
-                      value={editForm.country}
-                      onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-                      placeholder="e.g. 123 Business Ave, New York, USA"
-                      className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Registration No
-                      </label>
-                      <input
-                        type="text"
-                        value={editForm.registrationNumber}
-                        onChange={(e) => setEditForm({ ...editForm, registrationNumber: e.target.value })}
-                        placeholder="e.g. REG-12345"
-                        className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
-                        Tier
-                      </label>
-                      <select
-                        value={editForm.subscriptionTier}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, subscriptionTier: e.target.value as SubscriptionTier })
-                        }
-                        className="w-full text-xs px-2 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500 cursor-pointer"
-                      >
-                        <option value="Gold">Gold</option>
-                        <option value="Silver">Silver</option>
-                        <option value="Bronze">Bronze</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={handleCancelInlineEdit}
-                      className="px-2.5 py-1 text-slate-600 hover:bg-slate-200/60 rounded-md text-[11px] font-medium"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={savingEdit}
-                      className="px-3 py-1 bg-gradient-to-r from-teal-500 to-blue-600 hover:opacity-95 text-white rounded-md text-[11px] font-semibold transition disabled:opacity-50 flex items-center gap-1 shadow-2xs"
-                    >
-                      {savingEdit ? (
-                        <>
-                          <RefreshCw className="h-3 w-3 animate-spin" /> Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Save className="h-3 w-3" /> Save Changes
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                /* View Mode - Matching Reference Screen (All Backend Fields) */
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Industry</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.industry || "Technology"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Size</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.size || "500 - 1,000 employees"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Website</span>
-                    <a
-                      href={`https://${company.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-semibold text-teal-600 hover:underline flex items-center gap-1"
-                    >
-                      <span>{company.domain}</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Contact Person</span>
-                    <span className="font-semibold text-slate-900">
-                      {company.clientUser?.name || "John Anderson"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Email</span>
-                    {company.clientUser?.email ? (
-                      <a
-                        href={`mailto:${company.clientUser.email}`}
-                        className="font-semibold text-teal-600 hover:underline"
-                      >
-                        {company.clientUser.email}
-                      </a>
-                    ) : (
-                      <span className="font-semibold text-teal-600">
-                        {`contact@${company.domain}`}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Phone</span>
-                    <span className="font-semibold text-slate-800">
-                      {company.clientUser?.phone || "+1 212 555 0100"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Address</span>
-                    <span className="font-semibold text-slate-800 text-right">
-                      {company.country || "123 Business Ave, New York, USA"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Registration No</span>
-                    <span className="font-mono text-slate-700">
-                      {company.registrationNumber || "—"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
-                    <span className="text-slate-500 font-medium">Subscription Tier</span>
-                    <span className="font-bold text-amber-700">
-                      {company.activePlan || company.subscriptionTier || "Standard"}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between py-0.5">
-                    <span className="text-slate-500 font-medium">DNS Verification</span>
-                    <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
-                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                      {(company.verificationStatus || company.dnsVerificationStatus) === "Verified"
-                        ? "Verified Domain"
-                        : "Pending Check"}
-                    </span>
-                  </div>
-                </div>
+              {isAdmin && company?._id && (
+                <ImageUploader
+                  variant="logo"
+                  label="Organization logo"
+                  name={company.name}
+                  currentUrl={company.logo?.url}
+                  cacheKey={company.updatedAt || company.logo?.publicId}
+                  onUpload={async (file) => {
+                    const res = await companyService.uploadLogo(company._id, file);
+                    setCompany((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            logo: res.data?.logo || prev.logo,
+                            updatedAt: new Date().toISOString(),
+                          }
+                        : prev
+                    );
+                    onRefreshCompany?.();
+                    setEditSuccess(true);
+                    setTimeout(() => setEditSuccess(false), 3000);
+                  }}
+                  onRemove={async () => {
+                    await companyService.deleteLogo(company._id);
+                    setCompany((prev) =>
+                      prev ? { ...prev, logo: null, updatedAt: new Date().toISOString() } : prev
+                    );
+                    onRefreshCompany?.();
+                    setEditSuccess(true);
+                    setTimeout(() => setEditSuccess(false), 3000);
+                  }}
+                />
               )}
+
+              <div className="space-y-2.5 text-xs">
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Industry</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.industry || "Technology"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Size</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.size || "500 - 1,000 employees"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Website</span>
+                  <a
+                    href={`https://${company.domain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-teal-600 hover:underline flex items-center gap-1"
+                  >
+                    <span>{company.domain}</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Contact Person</span>
+                  <span className="font-semibold text-slate-900">
+                    {company.clientUser?.name || "John Anderson"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Email</span>
+                  {company.clientUser?.email ? (
+                    <a
+                      href={`mailto:${company.clientUser.email}`}
+                      className="font-semibold text-teal-600 hover:underline"
+                    >
+                      {company.clientUser.email}
+                    </a>
+                  ) : (
+                    <span className="font-semibold text-teal-600">
+                      {`contact@${company.domain}`}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Phone</span>
+                  <span className="font-semibold text-slate-800">
+                    {company.clientUser?.phone || "+1 212 555 0100"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Address</span>
+                  <span className="font-semibold text-slate-800 text-right">
+                    {company.country || "123 Business Ave, New York, USA"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Registration No</span>
+                  <span className="font-mono text-slate-700">
+                    {company.registrationNumber || "—"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 border-b border-slate-100">
+                  <span className="text-slate-500 font-medium">Subscription Tier</span>
+                  <span className="font-bold text-amber-700">
+                    {company.activePlan || "Standard"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-slate-500 font-medium">DNS Verification</span>
+                  <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    {company.verificationStatus === "Verified"
+                      ? "Verified Domain"
+                      : "Pending Check"}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -739,9 +676,9 @@ export default function OrganizationDetailDrawer({
                 </div>
                 <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200/80 text-center">
                   <div className="text-lg font-black text-slate-400">
-                    {assessments.filter((a) => a.status === "Draft").length}
+                    {assessments.filter((a) => a.status === "Archived").length}
                   </div>
-                  <div className="text-[10px] text-slate-400 font-medium">Not Started</div>
+                  <div className="text-[10px] text-slate-400 font-medium">Archived</div>
                 </div>
               </div>
             </div>
@@ -765,12 +702,12 @@ export default function OrganizationDetailDrawer({
                   </div>
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      latestAssessment.status === "Completed"
+                      latestAssessment.status === "Submitted"
                         ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                         : "bg-blue-50 text-blue-700 border border-blue-200"
                     }`}
                   >
-                    {latestAssessment.status === "Completed" ? "Completed" : "In Progress"}
+                    {latestAssessment.status === "Submitted" ? "Completed" : "In Progress"}
                   </span>
                 </div>
 
@@ -779,13 +716,13 @@ export default function OrganizationDetailDrawer({
                   <div className="flex items-center justify-between text-[11px] mb-1">
                     <span className="text-slate-500 font-medium">Progress</span>
                     <span className="font-bold text-teal-700">
-                      {latestAssessment.status === "Completed" ? "100%" : "68%"}
+                      {latestAssessment.status === "Submitted" ? "100%" : "68%"}
                     </span>
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                     <div
                       className="bg-gradient-to-r from-teal-500 to-blue-600 h-1.5 rounded-full"
-                      style={{ width: latestAssessment.status === "Completed" ? "100%" : "68%" }}
+                      style={{ width: latestAssessment.status === "Submitted" ? "100%" : "68%" }}
                     />
                   </div>
                 </div>
@@ -816,25 +753,58 @@ export default function OrganizationDetailDrawer({
               <div>
                 <h3 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                   <Users className="h-3.5 w-3.5 text-teal-600" />
-                  Assigned Auditors &amp; Assessors
+                  Assigned assessors
                 </h3>
                 <p className="text-[10.5px] text-slate-400 mt-0.5">
                   Certified assessors authorized to review this organization.
                 </p>
               </div>
 
-              {!showAssignForm && (
-                <button
-                  onClick={() => setShowAssignForm(true)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 rounded-lg transition"
-                >
-                  <Plus className="h-3 w-3" /> Assign Auditor
-                </button>
+              {isAdmin ? (
+                !showAssignForm &&
+                company.status === "Active" && (
+                  <button
+                    onClick={() => setShowAssignForm(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 rounded-lg transition"
+                  >
+                    <Plus className="h-3 w-3" /> Assign assessor
+                  </button>
+                )
+              ) : (
+                <span className="px-2.5 py-1 rounded-md text-[10.5px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                  Managed by Platform Admin
+                </span>
               )}
             </div>
 
-            {/* Inline Assign Auditor Form */}
-            {showAssignForm && (
+            {/* Access Role & Evaluation Scope Guide Banner */}
+            <div className="p-3 bg-slate-50 border border-slate-200/90 rounded-xl space-y-1.5 text-xs text-slate-600">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800 text-[11px]">
+                <ShieldCheck className="h-3.5 w-3.5 text-teal-600 shrink-0" />
+                <span>Assessor access &amp; evaluation privileges</span>
+              </div>
+              <ul className="space-y-1 text-[10.5px] text-slate-500 leading-tight">
+                <li>
+                  <strong className="text-slate-700">Owner (Full Edit Access):</strong> Initiates assessments, evaluates controls, and uploads evidence.
+                </li>
+                <li>
+                  <strong className="text-slate-700">Assessor (review access):</strong> Authorized assessor permitted to review working papers.
+                </li>
+                <li>
+                  <strong className="text-slate-700">Submitted Assessments:</strong> Formally locked to Read-Only / View Only for all parties.
+                </li>
+              </ul>
+            </div>
+
+            {company.status === "Suspended" && (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-900">
+                This organization is <strong>suspended</strong>. You cannot invite or assign new users until it is
+                activated again.
+              </div>
+            )}
+
+            {/* Inline Assign Auditor Form (Admin Only) */}
+            {isAdmin && company.status === "Active" && showAssignForm && (
               <form
                 onSubmit={handleAssignAuditor}
                 className="bg-slate-50/90 border border-slate-200 p-3 rounded-xl space-y-2.5 animate-in fade-in"
@@ -856,21 +826,15 @@ export default function OrganizationDetailDrawer({
                   </div>
                 )}
 
-                <select
+                <AsyncSearchSelect
                   value={selectedAssessorId}
-                  onChange={(e) => setSelectedAssessorId(e.target.value)}
-                  required
-                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-teal-500 font-medium"
-                >
-                  <option value="">-- Choose Assessor --</option>
-                  {availableAssessors
-                    .filter((a) => !auditors.some((aud) => aud.auditor?._id === a._id))
-                    .map((a) => (
-                      <option key={a._id} value={a._id}>
-                        {a.name} ({a.email})
-                      </option>
-                    ))}
-                </select>
+                  onChange={setSelectedAssessorId}
+                  placeholder="Choose assessor"
+                  searchPlaceholder="Search assessors…"
+                  loadOptions={loadAssessorOptions}
+                  allowCustom={false}
+                  pageSize={8}
+                />
 
                 <div className="flex items-center justify-end gap-2 pt-1">
                   <button
@@ -901,32 +865,35 @@ export default function OrganizationDetailDrawer({
 
             {/* List of Assigned Auditors */}
             {auditorsLoading ? (
-              <div className="py-8 text-center text-slate-400 flex flex-col items-center gap-2">
-                <RefreshCw className="h-5 w-5 animate-spin text-teal-600" />
-                <span>Loading assigned auditors...</span>
+              <div className="py-2 space-y-3" aria-busy aria-label="Loading auditors">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-14 rounded-lg bg-slate-100 animate-pulse" />
+                ))}
               </div>
             ) : auditors.length === 0 ? (
               <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl text-center space-y-1.5">
                 <Users className="h-6 w-6 text-slate-300 mx-auto" />
-                <p className="font-semibold text-slate-700 text-xs">No Auditors Assigned Yet</p>
+                <p className="font-semibold text-slate-700 text-xs">No assessors assigned yet</p>
                 <p className="text-[11px] text-slate-400">
-                  Assign a certified assessor so they can inspect this organization.
+                  Certified assessors mapped with privileges to audit this organization.
                 </p>
-                {!showAssignForm && (
+                {isAdmin && !showAssignForm && (
                   <button
                     onClick={() => setShowAssignForm(true)}
                     className="mt-2 px-3 py-1 bg-white border border-slate-200 hover:bg-slate-100 text-teal-700 font-semibold text-[11px] rounded-lg transition"
                   >
-                    + Assign First Auditor
+                    Assign first assessor
                   </button>
                 )}
               </div>
             ) : (
               <div className="space-y-2">
-                {auditors.map((item) => {
+                {auditors.map((item, idx) => {
                   const a = item.auditor;
                   const initial = a?.name?.charAt(0)?.toUpperCase() || "A";
                   const isUnassigning = unassigningId === item.mappingId;
+                  const isLeadOwner = idx === 0 || (assessments.length > 0 && a?._id === assessments[0]?.conductedByUserId);
+                  const isSubmitted = assessments.length > 0 && assessments[0]?.status === "Submitted";
 
                   return (
                     <div
@@ -942,27 +909,54 @@ export default function OrganizationDetailDrawer({
                             {a?.name || "Assessor"}
                           </div>
                           <div className="text-[10.5px] text-slate-500 truncate">{a?.email}</div>
+                          
+                          {/* Access-based Role Badge */}
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-semibold border ${
+                                isLeadOwner
+                                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                  : "bg-blue-50 text-blue-800 border-blue-200"
+                              }`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  isLeadOwner ? "bg-emerald-500" : "bg-blue-500"
+                                }`}
+                              />
+                              {isLeadOwner ? "Owner (full edit access)" : "Assessor (review access)"}
+                            </span>
+
+                            {isSubmitted && (
+                              <span className="px-1.5 py-0.5 rounded text-[9.5px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                                Submitted (View Only)
+                              </span>
+                            )}
+                          </div>
+
                           {item.assignedAt && (
-                            <div className="text-[9.5px] text-slate-400 mt-0.5">
+                            <div className="text-[9.5px] text-slate-400 mt-1">
                               Assigned {new Date(item.assignedAt).toLocaleDateString()}
                             </div>
                           )}
                         </div>
                       </div>
 
-                      {/* Unassign Button with Confirmation Dialog */}
-                      <button
-                        onClick={() => handleUnassignAuditor(item.mappingId, a?.name || "Assessor")}
-                        disabled={isUnassigning}
-                        title="Unassign auditor"
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition shrink-0 disabled:opacity-40"
-                      >
-                        {isUnassigning ? (
-                          <RefreshCw className="h-3.5 w-3.5 animate-spin text-rose-500" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
+                      {/* Unassign Button (Admin Only) */}
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleUnassignAuditor(item.mappingId, a?.name || "Assessor")}
+                          disabled={isUnassigning}
+                          title="Unassign auditor"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition shrink-0 disabled:opacity-40"
+                        >
+                          {isUnassigning ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin text-rose-500" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -1016,6 +1010,115 @@ export default function OrganizationDetailDrawer({
         variant={confirmModal.variant}
         loading={confirmModal.loading}
       />
+
+      {/* Edit Profile popup */}
+      <Modal
+        isOpen={editModalOpen}
+        onClose={handleCancelEditProfile}
+        title="Edit Profile"
+        maxWidth="md"
+      >
+        <form onSubmit={handleSaveInlineEdit} className="space-y-3">
+          {editError && (
+            <div className="p-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-lg text-[11px]">
+              {editError}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+              Legal Name *
+            </label>
+            <input
+              type="text"
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              placeholder={fieldPlaceholder.organizationName}
+              className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+              Primary Domain (read-only)
+            </label>
+            <div className="w-full text-xs px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-600">
+              {company.domain}
+            </div>
+          </div>
+
+          <AsyncSearchSelect
+            label="Industry"
+            value={editForm.industry}
+            onChange={(industry) => setEditForm({ ...editForm, industry })}
+            placeholder={fieldPlaceholder.selectIndustry}
+            searchPlaceholder="Search industries…"
+            loadOptions={loadIndustryOptions}
+            pageSize={8}
+          />
+
+          <AsyncSearchSelect
+            label="Country"
+            value={editForm.country}
+            onChange={(country) => setEditForm({ ...editForm, country })}
+            placeholder={fieldPlaceholder.selectCountry}
+            searchPlaceholder="Search countries…"
+            loadOptions={loadCountryOptions}
+            pageSize={8}
+          />
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Registration No
+              </label>
+              <input
+                type="text"
+                value={editForm.registrationNumber}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, registrationNumber: e.target.value })
+                }
+                placeholder={fieldPlaceholder.registrationId}
+                className="w-full text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                Tier (read-only)
+              </label>
+              <div className="w-full text-xs px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-600">
+                {company.activePlan || "Bronze"}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={handleCancelEditProfile}
+              className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 rounded-md text-[11px] font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingEdit}
+              className="px-3 py-1.5 bg-gradient-to-r from-teal-500 to-blue-600 hover:opacity-95 text-white rounded-md text-[11px] font-semibold transition disabled:opacity-50 flex items-center gap-1 shadow-2xs"
+            >
+              {savingEdit ? (
+                <>
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-3 w-3" /> Save Changes
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -1,15 +1,18 @@
 import { Request, Response, NextFunction } from "express";
+import { Types } from "mongoose";
 import { AssessmentSession } from "../models/AssessmentSession.js";
 import { Company } from "../models/Company.js";
 import { User } from "../models/User.js";
-import { Tenant } from "../models/Tenant.js";
-import { TenantMembership } from "../models/TenantMembership.js";
 import { AuditLog } from "../models/AuditLog.js";
+import { TenantMembership } from "../models/TenantMembership.js";
 import { AssessmentFramework } from "../models/AssessmentFramework.js";
-import { AuditorOrganization } from "../models/AuditorOrganization.js";
 import { sendSuccess, sendError } from "../utils/response.js";
-import { getAssignedOrganizationIds, isAuditorAssignedToOrg } from "../middlewares/companyScope.js";
-import { logAuthorizationDenied } from "./assessment.controller.js";
+import { getAssignedOrganizationIds } from "../middlewares/companyScope.js";
+import {
+  AnalyticsRange,
+  buildDashboardAnalytics,
+} from "../services/dashboardAnalytics.service.js";
+import { DashboardAnalyticsExportService } from "../services/dashboardAnalyticsExport.service.js";
 
 const CANONICAL_GRAICE_PILLARS = [
   { key: "P1", pillarId: "ethical-leadership", number: 1, name: "Ethical Leadership", defaultControls: 10 },
@@ -34,122 +37,138 @@ function resolvePillarInfo(pillarId?: string, pillarNumber?: number) {
   return byId || CANONICAL_GRAICE_PILLARS[0];
 }
 
+const AUDITOR_ROLES = { $in: ["Assessor", "Auditor"] };
+
+function isDashboardAdminRole(role?: string) {
+  return role === "SuperAdmin" || role === "Admin" || role === "TenantAdmin";
+}
+
+type DashboardAdminFilters = {
+  isSuperAdmin: boolean;
+  userFilter: Record<string, unknown>;
+  auditorFilter: Record<string, unknown>;
+  orgFilter: Record<string, unknown>;
+  sessionFilter: Record<string, unknown>;
+  auditLogFilter: Record<string, unknown>;
+  tenantCompanyIds: Types.ObjectId[];
+};
+
+async function buildDashboardAdminFilters(req: Request): Promise<DashboardAdminFilters | null> {
+  const role = req.user?.role;
+  if (!req.user) return null;
+
+  if (role === "SuperAdmin") {
+    return {
+      isSuperAdmin: true,
+      userFilter: {},
+      auditorFilter: { role: AUDITOR_ROLES },
+      orgFilter: {},
+      sessionFilter: {},
+      auditLogFilter: { action: { $ne: "AUTHORIZATION_DENIED" } },
+      tenantCompanyIds: [],
+    };
+  }
+
+  if (role === "TenantAdmin") {
+    let tenantIdStr = req.user.tenantId;
+    if (!tenantIdStr) {
+      const membership = await TenantMembership.findOne({
+        userId: req.user.userId,
+        role: "TenantAdmin",
+        status: "Active",
+      })
+        .select("tenantId")
+        .lean();
+      tenantIdStr = membership?.tenantId?.toString();
+    }
+    if (!tenantIdStr) {
+      return null;
+    }
+    const tenantId = new Types.ObjectId(tenantIdStr);
+    const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+    const tenantCompanyIds = tenantCompanies.map((c) => c._id);
+
+    const membershipAuditors = await TenantMembership.find({
+      tenantId,
+      role: "Auditor",
+      status: "Active",
+    })
+      .select("userId")
+      .lean();
+    const auditorIds = membershipAuditors.map((m) => m.userId);
+
+    const userOr: Record<string, unknown>[] = [{ tenantId }];
+    if (tenantCompanyIds.length) {
+      userOr.push({ companyId: { $in: tenantCompanyIds } });
+    }
+
+    const auditorFilter: Record<string, unknown> = { role: AUDITOR_ROLES };
+    if (auditorIds.length) {
+      auditorFilter._id = { $in: auditorIds };
+    } else {
+      auditorFilter.tenantId = tenantId;
+    }
+
+    const auditOr: Record<string, unknown>[] = [{ actorId: req.user.userId }];
+    if (tenantCompanyIds.length) {
+      auditOr.push({ "after.companyId": { $in: tenantCompanyIds.map(String) } });
+    }
+
+    return {
+      isSuperAdmin: false,
+      userFilter: { $or: userOr },
+      auditorFilter,
+      orgFilter: { tenantId },
+      sessionFilter: { tenantId },
+      auditLogFilter: { action: { $ne: "AUTHORIZATION_DENIED" }, $or: auditOr },
+      tenantCompanyIds,
+    };
+  }
+
+  if (req.user.companyId && (role === "Admin" || role === "TenantAdmin")) {
+    const companyId = req.user.companyId;
+    return {
+      isSuperAdmin: false,
+      userFilter: { companyId },
+      auditorFilter: { companyId, role: AUDITOR_ROLES },
+      orgFilter: { _id: companyId },
+      sessionFilter: { companyId },
+      auditLogFilter: { actorId: req.user.userId },
+      tenantCompanyIds: [],
+    };
+  }
+
+  return null;
+}
+
 /**
  * Admin Operational Dashboard Summary (Screen 7 Alignment)
  * Exposes high-level administrative numbers without any confidential assessment content.
- * - SuperAdmin: Platform-level tenant metadata only (no client organization or assessment access).
- * - TenantAdmin: Tenant-scoped client organizations, auditors, and assessment metadata.
  */
 export async function getAdminDashboardSummary(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user?.role !== "SuperAdmin" && req.user?.role !== "TenantAdmin") {
+    if (!isDashboardAdminRole(req.user?.role)) {
       return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
     }
 
-    const isSuperAdmin = req.user.role === "SuperAdmin";
-
-    if (isSuperAdmin) {
-      const [
-        totalUsers,
-        totalTenantAdmins,
-        totalAuditors,
-        totalTenants,
-        activeTenants,
-        pendingTenants,
-        suspendedTenants,
-        retiredTenants,
-        frameworkCount,
-        recentTenants,
-        recentLogs,
-      ] = await Promise.all([
-        User.countDocuments({}),
-        User.countDocuments({ role: "TenantAdmin" }),
-        User.countDocuments({ role: "Auditor" }),
-        Tenant.countDocuments({}),
-        Tenant.countDocuments({ status: "Active" }),
-        Tenant.countDocuments({ status: "Pending" }),
-        Tenant.countDocuments({ status: "Suspended" }),
-        Tenant.countDocuments({ status: "Retired" }),
-        AssessmentFramework.distinct("version").then((v) => v.length),
-        Tenant.find({}).sort({ createdAt: -1 }).limit(5),
-        AuditLog.find({ action: { $ne: "AUTHORIZATION_DENIED" }, entity: { $in: ["Tenant", "User", "AssessmentFramework"] } })
-          .sort({ timestamp: -1 })
-          .limit(6),
-      ]);
-
-      const recentTenantsWithStats = await Promise.all(
-        recentTenants.map(async (tenant) => {
-          const userCount = await TenantMembership.countDocuments({
-            tenantId: tenant._id,
-            status: "Active",
-          });
-          return {
-            _id: tenant._id,
-            name: tenant.name,
-            slug: tenant.slug,
-            status: tenant.status,
-            userCount,
-            createdAt: tenant.createdAt,
-          };
-        })
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
       );
-
-      const recentActivity = recentLogs.map((log) => ({
-        id: log._id,
-        title: log.action.replace(/_/g, " "),
-        description: `${log.actorEmail} performed ${log.action} on ${log.entity}`,
-        type: log.action,
-        timestamp: log.timestamp,
-      }));
-
-      return sendSuccess(res, {
-        stats: {
-          totalUsers,
-          totalTenantAdmins,
-          totalAuditors,
-          totalTenants,
-          totalOrganizations: totalTenants,
-          totalAssessments: 0,
-          frameworkVersions: frameworkCount || 1,
-          pillarsCount: 7,
-          controlsCount: 65,
-          questionsCount: 95,
-          evidenceItemsCount: 0,
-          reportsCount: 0,
-          activeSubscriptions: activeTenants,
-          permissionRolesCount: 3,
-        },
-        tenantsByStatus: {
-          total: totalTenants,
-          active: activeTenants,
-          pending: pendingTenants,
-          suspended: suspendedTenants,
-          retired: retiredTenants,
-        },
-        assessmentsByStatus: {
-          total: 0,
-          completed: 0,
-          inProgress: 0,
-          notStarted: 0,
-          overdue: 0,
-        },
-        subscriptionDistribution: {
-          total: totalTenants,
-          bronze: 0,
-          silver: 0,
-          gold: 0,
-        },
-        recentTenants: recentTenantsWithStats,
-        recentOrganizations: recentTenantsWithStats,
-        recentActivity,
-      });
     }
 
-    // TenantAdmin view: strictly scoped to their tenant
-    const tenantId = req.user.tenantId;
-    const companyId = req.user.companyId;
-    const orgFilter: Record<string, any> = tenantId ? { tenantId } : { _id: companyId };
-    const sessionFilter: Record<string, any> = tenantId ? { tenantId } : { companyId };
+    const {
+      isSuperAdmin,
+      userFilter,
+      auditorFilter,
+      orgFilter,
+      sessionFilter,
+      auditLogFilter,
+    } = scope;
 
     const [
       totalUsers,
@@ -162,21 +181,15 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
       companies,
       recentLogs,
     ] = await Promise.all([
-      tenantId
-        ? TenantMembership.countDocuments({ tenantId, status: "Active" })
-        : User.countDocuments({ companyId }),
-      tenantId
-        ? TenantMembership.countDocuments({ tenantId, role: "Auditor", status: "Active" })
-        : User.countDocuments({ companyId, role: "Auditor" }),
+      User.countDocuments(userFilter),
+      User.countDocuments(auditorFilter),
       Company.countDocuments(orgFilter),
       AssessmentSession.countDocuments(sessionFilter),
       AssessmentSession.countDocuments({ ...sessionFilter, status: "Submitted" }),
       AssessmentSession.countDocuments({ ...sessionFilter, status: "InProgress" }),
       AssessmentFramework.distinct("version").then((v) => v.length),
       Company.find(orgFilter).sort({ createdAt: -1 }).limit(5),
-      AuditLog.find(tenantId ? { tenantId } : { actorId: req.user.userId })
-        .sort({ timestamp: -1 })
-        .limit(6),
+      AuditLog.find(auditLogFilter).sort({ timestamp: -1 }).limit(6),
     ]);
 
     // Plan distributions
@@ -189,13 +202,16 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
     // Assessment count by company for recent organizations widget
     const recentOrgsWithStats = await Promise.all(
       companies.map(async (comp) => {
-        const assessCount = await AssessmentSession.countDocuments({ companyId: comp._id });
+        const [assessCount, userCount] = await Promise.all([
+          AssessmentSession.countDocuments({ companyId: comp._id }),
+          User.countDocuments({ companyId: comp._id }),
+        ]);
         return {
           _id: comp._id,
           name: comp.name,
           activePlan: comp.activePlan || "Bronze",
           assessmentCount: assessCount,
-          userCount: totalAuditors,
+          userCount,
           status: comp.status,
           createdAt: comp.createdAt,
         };
@@ -230,7 +246,7 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
           reportMetadata: { $exists: true },
         }),
         activeSubscriptions: bronzeCount + silverCount + goldCount,
-        permissionRolesCount: 3,
+        permissionRolesCount: 2,
       },
       assessmentsByStatus: {
         total: totalAssessments,
@@ -254,23 +270,162 @@ export async function getAdminDashboardSummary(req: Request, res: Response, next
 }
 
 /**
- * Admin Filterable Assessment Metadata Table (Screen 7 Alignment)
- * Strictly excludes answers, scores, and evidence URLs.
- * SuperAdmin is blocked from viewing tenant assessment metadata/records.
+ * Searchable organization list for dashboard scope control (SuperAdmin / Tenant Admin / Org Admin).
  */
-export async function getAdminDashboardAssessments(req: Request, res: Response, next: NextFunction) {
+export async function getAdminScopeOrganizations(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user?.role !== "SuperAdmin" && req.user?.role !== "TenantAdmin") {
+    if (!isDashboardAdminRole(req.user?.role)) {
       return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
     }
 
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
+    }
+
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string, 10) || 100));
+    const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+
+    const filter: Record<string, unknown> = { ...scope.orgFilter };
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(escaped, "i");
+      filter.$or = [{ name: regex }, { domain: regex }, { industry: regex }];
+    }
+
+    const companies = await Company.find(filter)
+      .select("name domain industry status activePlan logo")
+      .sort({ name: 1 })
+      .limit(limit)
+      .lean();
+
+    const payload = companies.map((c) => ({
+      _id: String(c._id),
+      name: c.name,
+      domain: c.domain,
+      industry: c.industry,
+      status: c.status,
+      activePlan: c.activePlan || "Bronze",
+      logoUrl:
+        c.logo && typeof c.logo === "object" && "url" in c.logo
+          ? String((c.logo as { url?: string }).url || "")
+          : null,
+    }));
+
+    return sendSuccess(res, payload);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Rich analytics for Admin / SuperAdmin dashboards (charts, trends, outliers).
+ * Query: ?range=30d|90d|6m|1y&companyId=<optional scope>
+ */
+export async function getAdminDashboardAnalytics(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!isDashboardAdminRole(req.user?.role)) {
+      return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
+    }
+
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
+    }
+
+    const range = (String(req.query.range || "30d") as AnalyticsRange);
+    const validRanges: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
+    const safeRange = validRanges.includes(range) ? range : "30d";
+
+    let companyId: string | undefined;
+    const scopeParam = typeof req.query.companyId === "string" ? req.query.companyId : "";
+
+    if (scope.isSuperAdmin && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
+      companyId = scopeParam;
+    } else if (
+      scopeParam &&
+      /^[0-9a-fA-F]{24}$/.test(scopeParam) &&
+      req.user?.role === "TenantAdmin" &&
+      scope.tenantCompanyIds.some((id) => id.toString() === scopeParam)
+    ) {
+      companyId = scopeParam;
+    } else if (!scope.isSuperAdmin && req.user?.companyId && !req.user.tenantId) {
+      companyId = req.user.companyId;
+    } else if (!scope.isSuperAdmin && req.user?.role === "Admin" && req.user.companyId) {
+      companyId = req.user.companyId;
+    }
+
+    const analytics = await buildDashboardAnalytics({
+      companyId: companyId || undefined,
+      tenantId:
+        !companyId && req.user?.role === "TenantAdmin" && req.user.tenantId
+          ? req.user.tenantId
+          : undefined,
+      isSuperAdmin: scope.isSuperAdmin,
+      range: safeRange,
+      tenantAdminUserId: req.user?.userId,
+    });
+
+    return sendSuccess(res, analytics);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Rich analytics for Assessor dashboards (scoped to assigned orgs).
+ */
+export async function getAuditorDashboardAnalytics(req: Request, res: Response, next: NextFunction) {
+  try {
+    const auditorId = req.user?.userId;
+    if (!auditorId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    const range = (String(req.query.range || "30d") as AnalyticsRange);
+    const validRanges: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
+    const safeRange = validRanges.includes(range) ? range : "30d";
+    const assignedCompanyIds = await getAssignedOrganizationIds(auditorId);
+
+    const analytics = await buildDashboardAnalytics({
+      assignedCompanyIds,
+      auditorUserId: auditorId,
+      range: safeRange,
+    });
+
+    return sendSuccess(res, analytics);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Admin Filterable Assessment Metadata Table (Screen 7 Alignment)
+ * Strictly excludes answers, scores, and evidence URLs.
+ */
+export async function getAdminDashboardAssessments(req: Request, res: Response, next: NextFunction) {
+  try {
     if (req.user?.role === "SuperAdmin") {
       return sendError(
         res,
-        "SuperAdmin sees tenant metadata only and cannot access tenant assessment records.",
+        "Super Admin sees tenant metadata only and cannot list assessment operational data.",
         403,
         "SUPER_ADMIN_CONTENT_ACCESS_RESTRICTED"
       );
+    }
+    const actorRole = req.user?.role;
+    if (actorRole !== "Admin" && actorRole !== "TenantAdmin") {
+      return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
     }
 
     const { status, search, assessmentType } = req.query as {
@@ -284,10 +439,10 @@ export async function getAdminDashboardAssessments(req: Request, res: Response, 
 
     const query: any = {};
 
-    // TenantAdmins are strictly scoped to their own tenant
-    if (req.user?.tenantId) {
+    // Tenant / org admins: scope by active tenant or legacy company
+    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
       query.tenantId = req.user.tenantId;
-    } else if (req.user?.companyId) {
+    } else if (req.user?.role === "Admin") {
       query.companyId = req.user.companyId;
     }
 
@@ -299,15 +454,24 @@ export async function getAdminDashboardAssessments(req: Request, res: Response, 
     }
 
     if (search) {
-      const companyFilter: Record<string, any> = {
+      const companySearch: Record<string, unknown> = {
         name: { $regex: search, $options: "i" },
       };
-      if (req.user?.tenantId) {
-        companyFilter.tenantId = req.user.tenantId;
+      if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+        companySearch.tenantId = req.user.tenantId;
       }
-      const matchingCompanies = await Company.find(companyFilter).select("_id");
+      const matchingCompanies = await Company.find(companySearch).select("_id");
       const companyIds = matchingCompanies.map((c) => c._id);
-      query.companyId = { $in: companyIds };
+      if (req.user?.role === "Admin") {
+        query.companyId = req.user.companyId;
+      } else if (req.user?.role === "TenantAdmin") {
+        query.companyId = { $in: companyIds };
+        if (req.user.tenantId) {
+          query.tenantId = req.user.tenantId;
+        }
+      } else {
+        query.companyId = { $in: companyIds };
+      }
     }
 
     const [total, sessions] = await Promise.all([
@@ -363,19 +527,14 @@ export async function getAuditorDashboardSummary(req: Request, res: Response, ne
       return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
     }
 
-    const assignedOrgIds = await getAssignedOrganizationIds(auditorId, req.user?.tenantId);
+    const assignedOrgIds = await getAssignedOrganizationIds(auditorId);
 
-    const sessionQuery: Record<string, any> = {
+    const sessionQuery = {
       $or: [
         { conductedByUserId: auditorId },
-        { createdByUserId: auditorId },
-        { "sharedWith.auditorId": auditorId },
+        { companyId: { $in: assignedOrgIds } },
       ],
     };
-
-    if (req.user?.tenantId) {
-      sessionQuery.tenantId = req.user.tenantId;
-    }
 
     const [allSessions, assignedCompanies] = await Promise.all([
       AssessmentSession.find(sessionQuery).populate("companyId", "name domain industry status activePlan"),
@@ -557,17 +716,14 @@ export async function getAuditorDashboardAssessments(req: Request, res: Response
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
     const skip = (page - 1) * limit;
 
+    const assignedOrgIds = await getAssignedOrganizationIds(auditorId);
+
     const query: any = {
       $or: [
         { conductedByUserId: auditorId },
-        { createdByUserId: auditorId },
-        { "sharedWith.auditorId": auditorId },
+        { companyId: { $in: assignedOrgIds } },
       ],
     };
-
-    if (req.user?.tenantId) {
-      query.tenantId = req.user.tenantId;
-    }
 
     if (status && status !== "all") {
       query.status = status;
@@ -647,25 +803,16 @@ export async function getAuditorOrganizations(req: Request, res: Response, next:
       return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
     }
 
-    const assignedOrgIds = await getAssignedOrganizationIds(auditorId, req.user?.tenantId);
+    const assignedOrgIds = await getAssignedOrganizationIds(auditorId);
     const companies = await Company.find({ _id: { $in: assignedOrgIds } }).sort({ name: 1 });
-
-    const auditorVisibilityFilter = {
-      $or: [
-        { conductedByUserId: auditorId },
-        { createdByUserId: auditorId },
-        { "sharedWith.auditorId": auditorId },
-      ],
-    };
 
     const organizationsWithStats = await Promise.all(
       companies.map(async (c) => {
-        const baseFilter = { companyId: c._id, ...auditorVisibilityFilter };
         const [total, inProgress, completed, latest] = await Promise.all([
-          AssessmentSession.countDocuments(baseFilter),
-          AssessmentSession.countDocuments({ ...baseFilter, status: "InProgress" }),
-          AssessmentSession.countDocuments({ ...baseFilter, status: "Submitted" }),
-          AssessmentSession.findOne(baseFilter).sort({ createdAt: -1 }),
+          AssessmentSession.countDocuments({ companyId: c._id }),
+          AssessmentSession.countDocuments({ companyId: c._id, status: "InProgress" }),
+          AssessmentSession.countDocuments({ companyId: c._id, status: "Submitted" }),
+          AssessmentSession.findOne({ companyId: c._id }).sort({ createdAt: -1 }),
         ]);
 
         return {
@@ -677,6 +824,7 @@ export async function getAuditorOrganizations(req: Request, res: Response, next:
           status: c.status,
           activePlan: c.activePlan || "Bronze",
           size: c.size || "100-500 employees",
+          logo: c.logo?.url ? { url: c.logo.url, publicId: c.logo.publicId } : null,
           assessmentsSummary: {
             total,
             inProgress,
@@ -704,6 +852,160 @@ export async function getAuditorOrganizations(req: Request, res: Response, next:
     );
 
     return sendSuccess(res, { organizations: organizationsWithStats });
+  } catch (err) {
+    next(err);
+  }
+}
+
+function parseAnalyticsExportFormat(raw: unknown): "pdf" | "xlsx" | null {
+  const f = String(raw || "pdf").toLowerCase();
+  if (f === "pdf") return "pdf";
+  if (f === "xlsx" || f === "excel") return "xlsx";
+  return null;
+}
+
+function parseAnalyticsRange(raw: unknown): AnalyticsRange {
+  const range = String(raw || "30d") as AnalyticsRange;
+  const valid: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
+  return valid.includes(range) ? range : "30d";
+}
+
+export async function exportAdminDashboardAnalytics(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = req.user;
+    if (!user) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+    if (!isDashboardAdminRole(user.role)) {
+      return sendError(res, "Access denied. Administrators only.", 403, "ADMIN_ROLE_REQUIRED");
+    }
+
+    const scope = await buildDashboardAdminFilters(req);
+    if (!scope) {
+      return sendError(
+        res,
+        "Access denied. Tenant or organization scope is required.",
+        403,
+        "ADMIN_SCOPE_REQUIRED"
+      );
+    }
+
+    const format = parseAnalyticsExportFormat(req.query.format);
+    if (!format) {
+      return sendError(res, "Invalid format. Use format=pdf or format=xlsx", 400, "INVALID_FORMAT");
+    }
+
+    const safeRange = parseAnalyticsRange(req.query.range);
+    let companyId: string | undefined;
+    const scopeParam = typeof req.query.companyId === "string" ? req.query.companyId : "";
+    if (scope.isSuperAdmin && scopeParam && /^[0-9a-fA-F]{24}$/.test(scopeParam)) {
+      companyId = scopeParam;
+    } else if (
+      scopeParam &&
+      /^[0-9a-fA-F]{24}$/.test(scopeParam) &&
+      user.role === "TenantAdmin" &&
+      scope.tenantCompanyIds.some((id) => id.toString() === scopeParam)
+    ) {
+      companyId = scopeParam;
+    } else if (user.role === "Admin" && user.companyId) {
+      companyId = user.companyId;
+    }
+
+    const analytics = await buildDashboardAnalytics({
+      companyId: companyId || undefined,
+      tenantId:
+        !companyId && user.role === "TenantAdmin" && user.tenantId ? user.tenantId : undefined,
+      isSuperAdmin: scope.isSuperAdmin,
+      range: safeRange,
+      tenantAdminUserId: user.userId,
+    });
+
+    let scopeLabel = "All organizations";
+    if (companyId) {
+      const org = await Company.findById(companyId).select("name").lean();
+      scopeLabel = org?.name || "Scoped organization";
+    } else if (user.role === "TenantAdmin" && user.tenantId) {
+      scopeLabel = "Tenant workspace";
+    }
+
+    const ctx = {
+      scopeLabel,
+      roleLabel:
+        user.role === "SuperAdmin"
+          ? "Super Administrator"
+          : user.role === "TenantAdmin"
+            ? "Tenant Administrator"
+            : "Organization Administrator",
+      requestedBy: user.email,
+    };
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (format === "pdf") {
+      const buffer = await DashboardAnalyticsExportService.buildPdf(analytics, ctx);
+      const fileName = `GCRAI_Analytics_${safeRange}_${stamp}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      return res.send(buffer);
+    }
+
+    const buffer = await DashboardAnalyticsExportService.buildExcel(analytics, ctx);
+    const fileName = `GCRAI_Analytics_${safeRange}_${stamp}.xlsx`;
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function exportAuditorDashboardAnalytics(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = req.user;
+    const auditorId = user?.userId;
+    if (!user || !auditorId) {
+      return sendError(res, "Authentication required", 401, "UNAUTHORIZED");
+    }
+
+    const format = parseAnalyticsExportFormat(req.query.format);
+    if (!format) {
+      return sendError(res, "Invalid format. Use format=pdf or format=xlsx", 400, "INVALID_FORMAT");
+    }
+
+    const safeRange = parseAnalyticsRange(req.query.range);
+    const assignedCompanyIds = await getAssignedOrganizationIds(auditorId);
+
+    const analytics = await buildDashboardAnalytics({
+      assignedCompanyIds,
+      auditorUserId: auditorId,
+      range: safeRange,
+    });
+
+    const ctx = {
+      scopeLabel: `Assigned portfolio (${assignedCompanyIds.length} organization(s))`,
+      roleLabel: "Accredited Assessor",
+      requestedBy: user.email,
+    };
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (format === "pdf") {
+      const buffer = await DashboardAnalyticsExportService.buildPdf(analytics, ctx);
+      const fileName = `GCRAI_Assessor_Analytics_${safeRange}_${stamp}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      return res.send(buffer);
+    }
+
+    const buffer = await DashboardAnalyticsExportService.buildExcel(analytics, ctx);
+    const fileName = `GCRAI_Assessor_Analytics_${safeRange}_${stamp}.xlsx`;
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.send(buffer);
   } catch (err) {
     next(err);
   }

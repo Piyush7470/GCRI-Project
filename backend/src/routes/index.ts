@@ -12,6 +12,8 @@ import adminFrameworkRoutes from "./adminFramework.routes.js";
 import auditLogRoutes from "./auditLog.routes.js";
 import apiKeyRoutes from "./apiKey.routes.js";
 import webhookRoutes from "./webhook.routes.js";
+import notificationRoutes from "./notification.routes.js";
+import referenceRoutes from "./reference.routes.js";
 
 const router = Router();
 
@@ -28,5 +30,7 @@ router.use("/admin/audit-logs", auditLogRoutes);
 router.use("/admin/api-keys", apiKeyRoutes);
 router.use("/webhooks", webhookRoutes);
 router.use("/dashboard", dashboardRoutes);
+router.use("/notifications", notificationRoutes);
+router.use("/reference", referenceRoutes);
 
 export default router;

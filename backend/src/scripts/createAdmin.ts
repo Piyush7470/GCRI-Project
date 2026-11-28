@@ -3,10 +3,6 @@ import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import path from "path";
 import { User } from "../models/User.js";
-import { Tenant } from "../models/Tenant.js";
-import { TenantMembership } from "../models/TenantMembership.js";
-import { Company } from "../models/Company.js";
-import { AssessmentSession } from "../models/AssessmentSession.js";
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
@@ -21,27 +17,32 @@ async function createAdmin() {
     await mongoose.connect(uri);
     console.log("Connected to MongoDB.");
 
-    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12", 10);
+    const email = (process.env.ADMIN_EMAIL || "admin@graice.io").toLowerCase();
+    const password = process.env.ADMIN_PASSWORD || "Admin@123456";
+    const name = process.env.ADMIN_NAME || "System Administrator";
 
-    // 10 reusable recovery codes
-    const recoveryCodes = [
-      "12345678", "87654321", "11223344", "55667788", "99001122",
-      "22334455", "66778899", "33445566", "77889900", "44556677"
+    const saltRounds = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12", 10);
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+  const recoveryCodes = [
+      "GCRAI-SA-284910",
+      "GCRAI-SA-573829",
+      "GCRAI-SA-619304",
+      "GCRAI-SA-842751",
+      "GCRAI-SA-105638",
+      "GCRAI-SA-397264",
+      "GCRAI-SA-720485",
+      "GCRAI-SA-958173",
     ];
     const hashedRecoveryCodes = await Promise.all(
       recoveryCodes.map(code => bcrypt.hash(code, saltRounds))
     );
 
-    // Migrate any legacy roles in database to canonical role names
-    await User.updateMany({ role: "Admin" as any }, { $set: { role: "TenantAdmin" } });
-    await User.updateMany(
-      { role: { $in: ["Assessor", "MembershipApprover"] as any } },
-      { $set: { role: "Auditor" } }
-    );
-
     // 1. Provision / Update Super Admin Account (Global Platform Owner)
-    const superAdminEmail = (process.env.SUPER_ADMIN_EMAIL || "superadmin@graice.io").toLowerCase();
-    const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD || "SuperAdmin@123456";
+    const superAdminEmail = (
+      process.env.SUPER_ADMIN_EMAIL || "gcrai.superadmin@gcrai.com"
+    ).toLowerCase();
+    const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD || "GcraiSuper#Client2026!";
     const superAdminName = process.env.SUPER_ADMIN_NAME || "Super Administrator";
     const superAdminHash = await bcrypt.hash(superAdminPassword, saltRounds);
 
@@ -58,7 +59,7 @@ async function createAdmin() {
         recoveryCodes: hashedRecoveryCodes,
       };
       await superAdminUser.save();
-      console.log(`✅ Super Admin account updated!`);
+      console.log(`✅ Super Admin account updated!`); 
     } else {
       superAdminUser = await User.create({
         email: superAdminEmail,
@@ -82,73 +83,7 @@ async function createAdmin() {
       console.log(`✅ Upgraded legacy admin@graice.io to SuperAdmin.`);
     }
 
-    // 2. Provision Default Active Tenant & TenantAdmin Account
-    let defaultTenant = await Tenant.findOne({ slug: "default-gcrai-tenant" });
-    if (!defaultTenant) {
-      defaultTenant = await Tenant.create({
-        name: "Default GCRAI Tenant",
-        slug: "default-gcrai-tenant",
-        status: "Active",
-        createdBy: superAdminUser._id,
-      });
-      console.log(`✅ Default Tenant created!`);
-    } else if (defaultTenant.status !== "Active") {
-      defaultTenant.status = "Active";
-      await defaultTenant.save();
-    }
-
-    const tenantAdminEmail = (process.env.TENANT_ADMIN_EMAIL || "tenantadmin@graice.io").toLowerCase();
-    const tenantAdminPassword = process.env.TENANT_ADMIN_PASSWORD || "TenantAdmin@123456";
-    const tenantAdminHash = await bcrypt.hash(tenantAdminPassword, saltRounds);
-
-    let tenantAdminUser = await User.findOne({ email: tenantAdminEmail });
-    if (tenantAdminUser) {
-      tenantAdminUser.passwordHash = tenantAdminHash;
-      tenantAdminUser.role = "TenantAdmin";
-      tenantAdminUser.tenantId = defaultTenant._id;
-      tenantAdminUser.status = "Active";
-      tenantAdminUser.name = "Default Tenant Admin";
-      tenantAdminUser.loginAttempts = 0;
-      tenantAdminUser.lockUntil = undefined;
-      tenantAdminUser.mfa = {
-        enabled: true,
-        recoveryCodes: hashedRecoveryCodes,
-      };
-      await tenantAdminUser.save();
-      console.log(`✅ TenantAdmin account updated!`);
-    } else {
-      tenantAdminUser = await User.create({
-        email: tenantAdminEmail,
-        passwordHash: tenantAdminHash,
-        name: "Default Tenant Admin",
-        role: "TenantAdmin",
-        tenantId: defaultTenant._id,
-        status: "Active",
-        mfa: {
-          enabled: true,
-          recoveryCodes: hashedRecoveryCodes,
-        },
-      });
-      console.log(`✅ New TenantAdmin account created!`);
-    }
-
-    defaultTenant.firstTenantAdminId = tenantAdminUser._id;
-    await defaultTenant.save();
-
-    await TenantMembership.findOneAndUpdate(
-      { tenantId: defaultTenant._id, userId: tenantAdminUser._id },
-      {
-        tenantId: defaultTenant._id,
-        userId: tenantAdminUser._id,
-        role: "TenantAdmin",
-        status: "Active",
-        invitedBy: superAdminUser._id,
-        acceptedAt: new Date(),
-      },
-      { upsert: true, new: true }
-    );
-
-    // 3. Provision / update standard Auditor account for seamless 1-click testing (no MFA needed)
+    // 2. Also provision/update a standard Auditor account for seamless 1-click testing (no MFA needed)
     const auditorEmail = "auditor@graice.io";
     const auditorPassword = "Auditor@123456";
     const auditorHash = await bcrypt.hash(auditorPassword, saltRounds);
@@ -156,8 +91,7 @@ async function createAdmin() {
     let auditorUser = await User.findOne({ email: auditorEmail });
     if (auditorUser) {
       auditorUser.passwordHash = auditorHash;
-      auditorUser.role = "Auditor";
-      auditorUser.tenantId = defaultTenant._id;
+      auditorUser.role = "Assessor";
       auditorUser.status = "Active";
       auditorUser.name = "Piyush Napit";
       auditorUser.loginAttempts = 0;
@@ -170,79 +104,12 @@ async function createAdmin() {
         email: auditorEmail,
         passwordHash: auditorHash,
         name: "Piyush Napit",
-        role: "Auditor",
-        tenantId: defaultTenant._id,
+        role: "Assessor",
         status: "Active",
         mfa: { enabled: false },
       });
       console.log(`✅ New Auditor account created!`);
     }
-
-    await TenantMembership.findOneAndUpdate(
-      { tenantId: defaultTenant._id, userId: auditorUser._id },
-      {
-        tenantId: defaultTenant._id,
-        userId: auditorUser._id,
-        role: "Auditor",
-        status: "Active",
-        invitedBy: tenantAdminUser._id,
-        acceptedAt: new Date(),
-      },
-      { upsert: true, new: true }
-    );
-
-    // 4. Provision / Update Auditor Account for yashnawgiri45@gmail.com
-    const yashEmail = "yashnawgiri45@gmail.com";
-    const yashPassword = "Password@123";
-    const yashHash = await bcrypt.hash(yashPassword, saltRounds);
-
-    let yashUser = await User.findOne({ email: yashEmail });
-    if (yashUser) {
-      yashUser.passwordHash = yashHash;
-      yashUser.role = "Auditor";
-      yashUser.tenantId = defaultTenant._id;
-      yashUser.status = "Active";
-      yashUser.name = yashUser.name || "Yash Nawgiri";
-      yashUser.loginAttempts = 0;
-      yashUser.lockUntil = undefined;
-      yashUser.mfa = { enabled: false };
-      await yashUser.save();
-      console.log(`✅ Auditor account (${yashEmail}) updated!`);
-    } else {
-      yashUser = await User.create({
-        email: yashEmail,
-        passwordHash: yashHash,
-        name: "Yash Nawgiri",
-        role: "Auditor",
-        tenantId: defaultTenant._id,
-        status: "Active",
-        mfa: { enabled: false },
-      });
-      console.log(`✅ New Auditor account (${yashEmail}) created!`);
-    }
-
-    await TenantMembership.findOneAndUpdate(
-      { tenantId: defaultTenant._id, userId: yashUser._id },
-      {
-        tenantId: defaultTenant._id,
-        userId: yashUser._id,
-        role: "Auditor",
-        status: "Active",
-        invitedBy: tenantAdminUser._id,
-        acceptedAt: new Date(),
-      },
-      { upsert: true, new: true }
-    );
-
-    // Backfill tenantId on existing Company and AssessmentSession records if missing
-    await Company.updateMany(
-      { tenantId: { $exists: false } },
-      { $set: { tenantId: defaultTenant._id } }
-    );
-    await AssessmentSession.updateMany(
-      { tenantId: { $exists: false } },
-      { $set: { tenantId: defaultTenant._id } }
-    );
 
     console.log("-----------------------------------------");
     console.log("Credentials:");
@@ -250,13 +117,8 @@ async function createAdmin() {
     console.log(`Email:         ${superAdminEmail}`);
     console.log(`Password:      ${superAdminPassword}`);
     console.log(`Role:          ${superAdminUser.role}`);
-    console.log(`MFA Recovery:  12345678 (or any in pool)`);
-    console.log("-----------------------------------------");
-    console.log(`Tenant Admin (Default GCRAI Tenant):`);
-    console.log(`Email:         ${tenantAdminEmail}`);
-    console.log(`Password:      ${tenantAdminPassword}`);
-    console.log(`Role:          ${tenantAdminUser.role}`);
-    console.log(`MFA Recovery:  12345678 (or any in pool)`);
+    console.log(`MFA Recovery:  GCRAI-SA-284910 (or any GCRAI-SA-* code in seed)`);
+    console.log(`Tip: run npm run seed:client-accounts for full client demo set.`);
     console.log("-----------------------------------------");
     console.log("Auditor (Direct Login - No MFA):");
     console.log(`Email:         ${auditorEmail}`);
@@ -265,7 +127,7 @@ async function createAdmin() {
     console.log("-----------------------------------------");
 
     // Also list all existing users so the user has full visibility
-    const allUsers = await User.find({}, "email role name status tenantId companyId").lean();
+    const allUsers = await User.find({}, "email role name status companyId").lean();
     console.log("\nAll registered users in database:");
     console.table(allUsers);
   } catch (err) {

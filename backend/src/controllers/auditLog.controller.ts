@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
+import { Types } from "mongoose";
 import { AuditLog } from "../models/AuditLog.js";
+import { Company } from "../models/Company.js";
 import { sendSuccess, sendError } from "../utils/response.js";
 
 /**
@@ -27,15 +29,6 @@ export async function getAuditLogs(
     } = req.query as Record<string, string | undefined>;
 
     const filter: Record<string, any> = {};
-
-    // Scope TenantAdmin strictly to their own tenant's audit trail
-    if (req.user?.role === "TenantAdmin") {
-      if (req.user.tenantId) {
-        filter.tenantId = req.user.tenantId;
-      } else {
-        filter.actorId = req.user.userId;
-      }
-    }
 
     if (actorId) filter.actorId = actorId;
     if (actorEmail) filter.actorEmail = { $regex: actorEmail.trim(), $options: "i" };
@@ -68,6 +61,17 @@ export async function getAuditLogs(
       ];
     }
 
+    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+      const tenantId = new Types.ObjectId(req.user.tenantId);
+      const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+      const companyIds = tenantCompanies.map((c) => String(c._id));
+      const tenantScope: Record<string, unknown>[] = [
+        { actorId: req.user.userId },
+        ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
+      ];
+      filter.$and = [...(filter.$and ? (filter.$and as unknown[]) : []), { $or: tenantScope }];
+    }
+
     const [logs, total] = await Promise.all([
       AuditLog.find(filter)
         .sort({ timestamp: -1 })
@@ -98,17 +102,18 @@ export async function getAuditLogStats(
 ) {
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const baseFilter: Record<string, any> = {};
 
-    if (req.user?.role === "TenantAdmin") {
-      if (req.user.tenantId) {
-        baseFilter.tenantId = req.user.tenantId;
-      } else {
-        baseFilter.actorId = req.user.userId;
-      }
+    let baseFilter: Record<string, unknown> = {};
+    if (req.user?.role === "TenantAdmin" && req.user.tenantId) {
+      const tenantId = new Types.ObjectId(req.user.tenantId);
+      const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+      const companyIds = tenantCompanies.map((c) => String(c._id));
+      const tenantScope: Record<string, unknown>[] = [
+        { actorId: req.user.userId },
+        ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
+      ];
+      baseFilter = { $or: tenantScope };
     }
-
-    const matchStage = Object.keys(baseFilter).length > 0 ? [{ $match: baseFilter }] : [];
 
     const [
       totalEvents,
@@ -119,15 +124,20 @@ export async function getAuditLogStats(
     ] = await Promise.all([
       AuditLog.countDocuments(baseFilter),
       AuditLog.countDocuments({ ...baseFilter, timestamp: { $gte: oneDayAgo } }),
-      AuditLog.countDocuments({ ...baseFilter, action: "AUTHORIZATION_DENIED" }),
+      AuditLog.countDocuments({
+        ...baseFilter,
+        action: "AUTHORIZATION_DENIED",
+        timestamp: { $gte: oneDayAgo },
+      }),
       AuditLog.aggregate([
-        ...matchStage,
+        ...(Object.keys(baseFilter).length ? [{ $match: baseFilter }] : []),
+        { $match: { timestamp: { $gte: oneDayAgo } } },
         { $group: { _id: "$action", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },
       ]),
       AuditLog.aggregate([
-        ...matchStage,
+        ...(Object.keys(baseFilter).length ? [{ $match: baseFilter }] : []),
         { $group: { _id: "$entity", count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 8 },

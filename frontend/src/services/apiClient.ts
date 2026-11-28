@@ -1,7 +1,9 @@
 import { storage } from "@/lib/storage";
+import { beginApiRequest, endApiRequest } from "@/lib/apiLoadingStore";
 import { ApiResponse } from "@/types/api.types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
+const REQUEST_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS) || 30_000;
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
@@ -11,7 +13,8 @@ export async function apiRequest<T = any>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<ApiResponse<T>> {
-  const { params, headers, ...customConfig } = options;
+  beginApiRequest();
+  const { params, headers, body: rawBody, ...customConfig } = options;
 
   let url = `${BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
   if (params) {
@@ -28,54 +31,107 @@ export async function apiRequest<T = any>(
   }
 
   const token = storage.getToken();
+  const isFormData =
+    typeof FormData !== "undefined" && rawBody instanceof FormData;
+
   const defaultHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
     Accept: "application/json",
-    "x-test-suite": "graice-internal-test",
   };
+  if (!isFormData) {
+    defaultHeaders["Content-Type"] = "application/json";
+  }
 
   if (token) {
     defaultHeaders["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    ...customConfig,
-    headers: {
-      ...defaultHeaders,
-      ...headers,
-    },
-  });
-
-  if (response.status === 401 && typeof window !== "undefined") {
-    // If unauthorized, clear token if expired
-    const currentPath = window.location.pathname;
-    if (!currentPath.startsWith("/login") && !currentPath.startsWith("/accept-invite")) {
-      storage.clear();
-      // Optional: window.location.href = "/login";
+  if (typeof window !== "undefined") {
+    const activeTenant = localStorage.getItem("graice_active_tenant_id");
+    if (activeTenant) {
+      defaultHeaders["x-tenant-id"] = activeTenant;
     }
   }
 
-  let data: any;
-  const contentType = response.headers.get("content-type");
-  if (contentType && contentType.includes("application/json")) {
-    data = await response.json();
-  } else {
-    data = await response.text();
-  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const errorMessage =
-      data?.error?.message ||
-      data?.message ||
-      (typeof data?.error === "string" ? data.error : null) ||
-      `HTTP error ${response.status}`;
-    const error = new Error(errorMessage) as any;
-    error.status = response.status;
-    error.data = data;
-    throw error;
-  }
+  try {
+    const response = await fetch(url, {
+      ...customConfig,
+      signal: controller.signal,
+      body: isFormData
+        ? rawBody
+        : rawBody !== undefined && rawBody !== null
+          ? typeof rawBody === "string"
+            ? rawBody
+            : JSON.stringify(rawBody)
+          : undefined,
+      headers: {
+        ...defaultHeaders,
+        ...headers,
+      },
+    });
 
-  return data as ApiResponse<T>;
+    if (response.status === 401 && typeof window !== "undefined") {
+      const currentPath = window.location.pathname;
+      if (
+        !currentPath.startsWith("/login") &&
+        !currentPath.startsWith("/accept-invite") &&
+        !currentPath.startsWith("/mfa-enroll") &&
+        !currentPath.startsWith("/forgot-password") &&
+        !currentPath.startsWith("/reset-password")
+      ) {
+        storage.clear();
+      }
+    }
+
+    let data: any;
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = await response.text();
+    }
+
+    if (!response.ok) {
+      let errorMessage =
+        data?.error?.message ||
+        data?.message ||
+        (typeof data?.error === "string" ? data.error : null) ||
+        `HTTP error ${response.status}`;
+
+      if (data?.error?.details) {
+        if (Array.isArray(data.error.details)) {
+          const issues = data.error.details
+            .map((d: any) => d.message || (d.path ? `${d.path.join(".")}: invalid` : null))
+            .filter(Boolean)
+            .join(". ");
+          if (issues) {
+            errorMessage = `${errorMessage}: ${issues}`;
+          }
+        } else if (typeof data.error.details === "string") {
+          errorMessage = `${errorMessage}: ${data.error.details}`;
+        }
+      }
+
+      const error = new Error(errorMessage) as any;
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
+
+    return data as ApiResponse<T>;
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `Request timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. Check your connection or try again.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+    endApiRequest();
+  }
 }
 
 export const apiClient = {
@@ -85,19 +141,19 @@ export const apiClient = {
     apiRequest<T>(endpoint, {
       ...options,
       method: "POST",
-      body: body ? JSON.stringify(body) : undefined,
+      body,
     }),
   put: <T = any>(endpoint: string, body?: any, options?: RequestOptions) =>
     apiRequest<T>(endpoint, {
       ...options,
       method: "PUT",
-      body: body ? JSON.stringify(body) : undefined,
+      body,
     }),
   patch: <T = any>(endpoint: string, body?: any, options?: RequestOptions) =>
     apiRequest<T>(endpoint, {
       ...options,
       method: "PATCH",
-      body: body ? JSON.stringify(body) : undefined,
+      body,
     }),
   delete: <T = any>(endpoint: string, options?: RequestOptions) =>
     apiRequest<T>(endpoint, { ...options, method: "DELETE" }),

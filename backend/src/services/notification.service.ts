@@ -10,14 +10,7 @@ export const notificationEvents = new NotificationEmitter();
 // Attach automated listeners to forward platform events to email service
 notificationEvents.on("COMPANY_ONBOARDED", async ({ company, actor }: { company: ICompany; actor: { id: string; email: string } }) => {
   try {
-    const adminFilter: Record<string, any> = {
-      role: "TenantAdmin",
-      status: "Active",
-    };
-    if (company.tenantId) {
-      adminFilter.tenantId = company.tenantId;
-    }
-    const adminUsers = await User.find(adminFilter).select("email");
+    const adminUsers = await User.find({ role: { $in: ["SuperAdmin", "Admin"] }, status: "Active" }).select("email");
     const adminEmails = adminUsers.map((u) => u.email);
     if (adminEmails.length === 0) {
       adminEmails.push(process.env.ADMIN_EMAIL || "admin@graice.ai");
@@ -37,14 +30,7 @@ notificationEvents.on("COMPANY_ONBOARDED", async ({ company, actor }: { company:
 
 notificationEvents.on("DOMAIN_VERIFICATION_PENDING", async ({ company, reason }: { company: ICompany; reason: string }) => {
   try {
-    const adminFilter: Record<string, any> = {
-      role: "TenantAdmin",
-      status: "Active",
-    };
-    if (company.tenantId) {
-      adminFilter.tenantId = company.tenantId;
-    }
-    const adminUsers = await User.find(adminFilter).select("email");
+    const adminUsers = await User.find({ role: { $in: ["SuperAdmin", "Admin"] }, status: "Active" }).select("email");
     const adminEmails = adminUsers.map((u) => u.email);
     if (adminEmails.length === 0) {
       adminEmails.push(process.env.ADMIN_EMAIL || "admin@graice.ai");
@@ -63,8 +49,7 @@ notificationEvents.on("DOMAIN_VERIFICATION_PENDING", async ({ company, reason }:
 
 notificationEvents.on("USER_INVITED", async ({ user, invitedBy, rawToken }: { user: IUser; invitedBy: { id: string; email: string }; rawToken: string }) => {
   try {
-    const clientBaseUrl = process.env.CLIENT_BASE_URL || "http://localhost:3000";
-    const invitationUrl = `${clientBaseUrl}/accept-invite?token=${rawToken}`;
+    const invitationUrl = `${emailService.getAppBaseUrl()}/accept-invite?token=${rawToken}`;
 
     await emailService.sendUserInvitation({
       recipientEmail: user.email,

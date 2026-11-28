@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { User } from "@/types/auth.types";
 import { storage } from "@/lib/storage";
 import { userService } from "@/services/user.service";
+import { normalizeLoginUser } from "@/lib/authUser";
 
 interface AuthContextType {
   user: User | null;
@@ -13,6 +14,8 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   isSuperAdmin: boolean;
   isAdmin: boolean;
+  isOrgAdmin: boolean;
+  isTenantAdmin: boolean;
   isAssessor: boolean;
 }
 
@@ -25,16 +28,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = useCallback(async () => {
     const token = storage.getToken();
     if (!token) {
+      storage.clear();
       setUser(null);
       setLoading(false);
       return;
     }
 
+    const hasCachedProfile = Boolean(storage.getUser());
+    if (!hasCachedProfile) {
+      setLoading(true);
+    }
+
     try {
       const res = await userService.getCurrentUser();
-      if (res && res.data) {
-        setUser(res.data);
-        storage.setUser(res.data);
+      const normalized = normalizeLoginUser(
+        res?.data as unknown as Record<string, unknown>
+      );
+      if (normalized) {
+        // Preserve richer MFA flags from /users/me beyond login shape
+        const mfaRaw = (res.data as User)?.mfa;
+        const enriched: User = {
+          ...normalized,
+          mfa: {
+            enabled: Boolean(mfaRaw?.enabled ?? normalized.mfa.enabled),
+            authenticatorConfigured: Boolean(mfaRaw?.authenticatorConfigured),
+            recoveryCodesRemaining: mfaRaw?.recoveryCodesRemaining,
+          },
+          mfaEnabled: Boolean(mfaRaw?.enabled ?? normalized.mfaEnabled),
+          avatar: (res.data as User)?.avatar ?? normalized.avatar,
+          phone: (res.data as User)?.phone ?? normalized.phone,
+          companyId: (res.data as User)?.companyId ?? normalized.companyId,
+          tenantId: (res.data as User)?.tenantId ?? normalized.tenantId,
+        };
+        setUser(enriched);
+        storage.setUser(enriched);
+      } else {
+        storage.clear();
+        setUser(null);
       }
     } catch {
       storage.clear();
@@ -45,17 +75,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const cachedUser = storage.getUser<User>();
-    if (cachedUser) {
-      setUser(cachedUser);
+    const token = storage.getToken();
+    const cached = storage.getUser<Record<string, unknown>>();
+    if (token && cached) {
+      const hydrated = normalizeLoginUser(cached);
+      if (hydrated) {
+        setUser(hydrated);
+        setLoading(false);
+      }
     }
-    refreshUser();
+    void refreshUser();
   }, [refreshUser]);
 
   const login = (token: string, newUser: User) => {
     storage.setToken(token);
     storage.setUser(newUser);
     setUser(newUser);
+    setLoading(false);
   };
 
   const logout = () => {
@@ -66,9 +102,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const isSuperAdmin = user?.role === "SuperAdmin";
-  const isAdmin = user?.role === "SuperAdmin" || user?.role === "Admin";
-  const isAssessor = user?.role === "Assessor";
+  const isSuperAdmin = Boolean(user && user.role === "SuperAdmin" && user.status === "Active");
+  const isTenantAdmin = Boolean(user && user.role === "TenantAdmin" && user.status === "Active");
+  const isOrgAdmin = Boolean(
+    user && (user.role === "Admin" || user.role === "TenantAdmin") && user.status === "Active"
+  );
+  const isAdmin = Boolean(
+    user &&
+      (user.role === "SuperAdmin" || user.role === "Admin" || user.role === "TenantAdmin") &&
+      user.status === "Active"
+  );
+  const isAssessor = Boolean(
+    user && (user.role === "Assessor" || user.role === "Auditor") && user.status === "Active"
+  );
 
   return (
     <AuthContext.Provider
@@ -80,6 +126,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshUser,
         isSuperAdmin,
         isAdmin,
+        isOrgAdmin,
+        isTenantAdmin,
         isAssessor,
       }}
     >

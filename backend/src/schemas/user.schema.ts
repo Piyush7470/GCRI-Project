@@ -5,7 +5,7 @@ const objectIdRegex = /^[0-9a-fA-F]{24}$/;
 export const UpdateProfileSchema = z.object({
   body: z.object({
     name: z.string().trim().min(2, "Name must be at least 2 characters").max(100).optional(),
-    phone: z.string().trim().max(30).optional(),
+    phone: z.string().trim().max(20).optional(),
   }),
 });
 
@@ -13,18 +13,19 @@ export const InviteUserSchema = z.object({
   body: z.object({
     email: z.string().trim().email("Invalid email address").toLowerCase(),
     name: z.string().trim().min(2, "Name must be at least 2 characters").max(100),
-    role: z.enum(["SuperAdmin", "TenantAdmin", "Auditor"], {
-      message: "Role must be SuperAdmin, TenantAdmin, or Auditor",
+    // SuperAdmin is sole/platform-seeded — not inviteable
+    role: z.enum(["TenantAdmin", "Assessor", "Auditor"], {
+      message: "Role must be TenantAdmin or Assessor",
     }),
-    tenantId: z.string().regex(objectIdRegex, "Invalid Tenant ID format").optional(),
     companyId: z.string().regex(objectIdRegex, "Invalid Company ID format").optional(),
+    tenantId: z.string().regex(objectIdRegex, "Invalid tenant ID format").optional(),
   }),
 });
 
 export const AcceptInviteSchema = z.object({
   body: z.object({
     token: z.string().trim().min(10, "Invitation token is required"),
-    password: z.string().min(8, "Password must be at least 8 characters").optional(),
+    password: z.string().min(8, "Password must be at least 8 characters"),
   }),
 });
 
@@ -44,8 +45,9 @@ export const UpdateUserRoleSchema = z.object({
     id: z.string().regex(objectIdRegex, "Invalid User ID format"),
   }),
   body: z.object({
-    role: z.enum(["SuperAdmin", "TenantAdmin", "Auditor"], {
-      message: "Role must be SuperAdmin, TenantAdmin, or Auditor",
+    // Cannot promote anyone to SuperAdmin — only one exists
+    role: z.enum(["TenantAdmin", "Assessor", "Auditor"], {
+      message: "Role must be TenantAdmin or Assessor",
     }),
   }),
 });

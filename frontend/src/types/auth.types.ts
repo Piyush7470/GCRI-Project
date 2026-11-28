@@ -1,5 +1,12 @@
-export type UserRole = "SuperAdmin" | "Admin" | "Assessor" | "MembershipApprover";
+export type UserRole =
+  | "SuperAdmin"
+  | "Admin"
+  | "TenantAdmin"
+  | "Assessor"
+  | "Auditor"
+  | "MembershipApprover";
 export type UserStatus = "Active" | "Deactivated";
+export type AuthProvider = "credentials" | "google" | "microsoft";
 
 export interface UserCompany {
   _id: string;
@@ -7,6 +14,12 @@ export interface UserCompany {
   domain?: string;
   verificationStatus?: string;
   status?: string;
+  logo?: { url: string; publicId?: string } | null;
+}
+
+export interface UserImageAsset {
+  url: string;
+  publicId?: string;
 }
 
 export interface User {
@@ -16,13 +29,22 @@ export interface User {
   email: string;
   phone?: string;
   role: UserRole;
-  status?: UserStatus;
+  status: UserStatus;
   isActive?: boolean;
-  mfa?: {
+  authProvider?: AuthProvider;
+  avatar?: UserImageAsset | null;
+  mfa: {
     enabled: boolean;
+    /** True when a TOTP authenticator secret is stored (QR setup completed). */
+    authenticatorConfigured?: boolean;
+    recoveryCodesRemaining?: number;
   };
   mfaEnabled?: boolean;
   companyId?: string | UserCompany | null;
+  tenantId?: string | null;
+  tenantIds?: string[];
+  invitationExpires?: string;
+  lockUntil?: string;
   lastLogin?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -32,12 +54,25 @@ export interface LoginResponse {
   token?: string;
   user?: User;
   mfaRequired?: boolean;
+  mfaSetupRequired?: boolean;
+  tempToken?: string;
   mfaToken?: string;
+  userId?: string;
 }
 
 export interface MfaVerifyResponse {
   token: string;
   user: User;
+  recoveryCodes?: string[];
+}
+
+export interface SetupMfaResponse {
+  secret: string;
+  qrCodeUrl: string;
+  issuer: string;
+  account: string;
+  reconfigure?: boolean;
+  message?: string;
 }
 
 export interface InviteUserPayload {
@@ -45,12 +80,14 @@ export interface InviteUserPayload {
   email: string;
   role: UserRole;
   companyId?: string;
+  tenantId?: string;
 }
 
 export interface AdminUpdateUserPayload {
   name?: string;
   phone?: string;
   companyId?: string | null;
+  tenantId?: string | null;
   role?: UserRole;
   status?: UserStatus;
 }

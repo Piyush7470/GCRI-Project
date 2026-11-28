@@ -1,0 +1,924 @@
+"use client";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { assessmentService } from "@/services/assessment.service";
+import { AssessmentSession } from "@/types/assessment.types";
+import { FrameworkQuestion } from "@/types/framework.types";
+import { getApiErrorMessage, getUserFacingApiError } from "@/lib/authUser";
+import { useToast } from "@/context/ToastContext";
+import {
+  clearAssessmentDraft,
+  computeResumeIndex,
+  loadAssessmentDraft,
+  mergeAnswersWithDraft,
+  saveAssessmentDraft,
+} from "@/lib/assessmentDraftStorage";
+import { cn } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
+import { AssessmentWorkspaceSkeleton } from "@/components/shared/PageSkeletons";
+import {
+  ArrowLeft,
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Lock,
+  RefreshCw,
+  Save,
+  FileCheck2,
+  ListChecks,
+  CircleDashed,
+  Sparkles,
+  SkipForward,
+  ClipboardCheck,
+} from "lucide-react";
+
+export interface AssessmentPlayerProps {
+  assessmentId: string;
+}
+
+interface SectionGroup {
+  key: string;
+  label: string;
+  questionIndices: number[];
+}
+
+function companyLabel(session: AssessmentSession): string {
+  const c = session.companyId;
+  if (c && typeof c === "object" && "name" in c) {
+    return String((c as { name?: string }).name || "Client organization");
+  }
+  return "Client organization";
+}
+
+function sectionKeyForQuestion(q: FrameworkQuestion): string {
+  return q.section || q.pillarName || q.pillarId || "general";
+}
+
+function StatPill({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "slate" | "emerald" | "amber" | "sky" | "rose";
+}) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-800 border-slate-200",
+    emerald: "bg-emerald-50 text-emerald-800 border-emerald-200",
+    amber: "bg-amber-50 text-amber-900 border-amber-200",
+    sky: "bg-sky-50 text-sky-900 border-sky-200",
+    rose: "bg-rose-50 text-rose-800 border-rose-200",
+  };
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-2 py-1 flex flex-col gap-0 min-w-[64px] transition-transform hover:scale-[1.02]",
+        tones[tone]
+      )}
+    >
+      <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">{label}</span>
+      <span className="text-sm font-bold tabular-nums leading-none">
+        <AnimatedNumber value={value} duration={600} />
+      </span>
+    </div>
+  );
+}
+
+export function AssessmentPlayer({ assessmentId }: AssessmentPlayerProps) {
+  const toast = useToast();
+
+  const [session, setSession] = useState<AssessmentSession | null>(null);
+  const [questions, setQuestions] = useState<FrameworkQuestion[]>([]);
+  const [frameworkTitle, setFrameworkTitle] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [answersByQuestionId, setAnswersByQuestionId] = useState<Record<string, string>>({});
+  const [skippedQuestionIds, setSkippedQuestionIds] = useState<Set<string>>(new Set());
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [navLockMessage, setNavLockMessage] = useState<string | null>(null);
+  const [expandedSectionKeys, setExpandedSectionKeys] = useState<Set<string>>(new Set());
+
+  const [saving, setSaving] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+
+  const draftPersistReady = useRef(false);
+  const restoredDraftRef = useRef(false);
+
+  const loadAssessment = useCallback(async () => {
+    if (!assessmentId) {
+      setError("Invalid assessment link.");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSaveNotice(null);
+    draftPersistReady.current = false;
+
+    try {
+      const res = await assessmentService.getAssessmentById(assessmentId);
+      const payload = res?.data;
+      if (!payload?.session) {
+        setError("Assessment session returned an unexpected format.");
+        setSession(null);
+        setQuestions([]);
+        return;
+      }
+
+      setSession(payload.session);
+
+      const fw = payload.framework;
+      if (!fw?.questions?.length) {
+        setQuestions([]);
+        setFrameworkTitle(fw?.title || "");
+        setError(
+          "No published framework questions were returned for this session. Confirm the Light framework is seeded and published on the backend."
+        );
+        return;
+      }
+
+      const sorted = [...fw.questions].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      setQuestions(sorted);
+      setFrameworkTitle(fw.title || `${payload.session.assessmentType} Assessment`);
+
+      const initial: Record<string, string> = {};
+      for (const a of payload.session.answers || []) {
+        if (a.selectedOptionCode) {
+          initial[a.questionId] = a.selectedOptionCode;
+        }
+      }
+
+      const questionIds = sorted.map((q) => q.questionId);
+      const sessionSubmitted = payload.session.status === "Submitted";
+
+      if (sessionSubmitted) {
+        clearAssessmentDraft(assessmentId);
+        setAnswersByQuestionId(initial);
+        setSkippedQuestionIds(new Set());
+        setCurrentIndex(
+          computeResumeIndex(questionIds, initial, new Set(), sorted.length - 1)
+        );
+      } else {
+        const draft = loadAssessmentDraft(assessmentId);
+        const merged = mergeAnswersWithDraft(initial, draft);
+        const skippedSet = new Set(draft?.skippedQuestionIds ?? []);
+        for (const qid of Object.keys(merged)) {
+          if (merged[qid]) skippedSet.delete(qid);
+        }
+        setAnswersByQuestionId(merged);
+        setSkippedQuestionIds(skippedSet);
+        setCurrentIndex(
+          computeResumeIndex(questionIds, merged, skippedSet, draft?.currentIndex)
+        );
+
+        if (
+          draft &&
+          !restoredDraftRef.current &&
+          (Object.keys(draft.answers).some((k) => draft.answers[k] !== initial[k]) ||
+            (draft.skippedQuestionIds?.length ?? 0) > 0)
+        ) {
+          restoredDraftRef.current = true;
+          toast.info("Restored your in-progress answers from this device.", {
+            dedupeKey: "assessment-draft-restored",
+            durationMs: 3500,
+          });
+        }
+      }
+
+      draftPersistReady.current = !sessionSubmitted;
+    } catch (err: unknown) {
+      setError(getUserFacingApiError(err, "this assessment"));
+      setSession(null);
+      setQuestions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [assessmentId, toast]);
+
+  useEffect(() => {
+    loadAssessment();
+  }, [loadAssessment]);
+
+  useEffect(() => {
+    restoredDraftRef.current = false;
+  }, [assessmentId]);
+
+  useEffect(() => {
+    if (!draftPersistReady.current || !assessmentId || session?.status === "Submitted") {
+      return;
+    }
+    saveAssessmentDraft(assessmentId, {
+      answers: answersByQuestionId,
+      skippedQuestionIds: Array.from(skippedQuestionIds),
+      currentIndex,
+    });
+  }, [
+    assessmentId,
+    answersByQuestionId,
+    skippedQuestionIds,
+    currentIndex,
+    session?.status,
+  ]);
+
+  const isSubmitted = session?.status === "Submitted";
+
+  const answeredCount = useMemo(
+    () => questions.filter((q) => Boolean(answersByQuestionId[q.questionId])).length,
+    [questions, answersByQuestionId]
+  );
+
+  const skippedCount = useMemo(
+    () => questions.filter((q) => skippedQuestionIds.has(q.questionId) && !answersByQuestionId[q.questionId]).length,
+    [questions, skippedQuestionIds, answersByQuestionId]
+  );
+
+  const remainingCount = useMemo(
+    () =>
+      questions.filter(
+        (q) => !answersByQuestionId[q.questionId] && !skippedQuestionIds.has(q.questionId)
+      ).length,
+    [questions, answersByQuestionId, skippedQuestionIds]
+  );
+
+  const progressPercent = useMemo(() => {
+    if (questions.length === 0) return 0;
+    return Math.round((answeredCount / questions.length) * 100);
+  }, [answeredCount, questions.length]);
+
+  const sections: SectionGroup[] = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, SectionGroup>();
+    questions.forEach((q, index) => {
+      const key = sectionKeyForQuestion(q);
+      if (!map.has(key)) {
+        order.push(key);
+        map.set(key, { key, label: q.section || q.pillarName || key, questionIndices: [] });
+      }
+      map.get(key)!.questionIndices.push(index);
+    });
+    return order.map((k) => map.get(k)!);
+  }, [questions]);
+
+  // Keep the active pillar/section accordion open
+  useEffect(() => {
+    const q = questions[currentIndex];
+    if (!q) return;
+    const key = sectionKeyForQuestion(q);
+    setExpandedSectionKeys((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }, [currentIndex, questions]);
+
+  const toggleSectionExpanded = (key: string) => {
+    setExpandedSectionKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const firstIncompleteIndex = useMemo(() => {
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const answered = Boolean(answersByQuestionId[q.questionId]);
+      const skipped = skippedQuestionIds.has(q.questionId);
+      if (!answered && !skipped) return i;
+    }
+    return questions.length;
+  }, [questions, answersByQuestionId, skippedQuestionIds]);
+
+  const maxNavigableIndex = isSubmitted
+    ? questions.length - 1
+    : Math.min(firstIncompleteIndex, questions.length - 1);
+
+  const currentQuestion = questions[currentIndex];
+  const currentAnswered = currentQuestion
+    ? Boolean(answersByQuestionId[currentQuestion.questionId])
+    : false;
+  const currentSkipped = currentQuestion
+    ? skippedQuestionIds.has(currentQuestion.questionId) && !currentAnswered
+    : false;
+  const currentCanProceed = currentAnswered || currentSkipped;
+
+  const isLastQuestion = currentIndex >= questions.length - 1;
+  const canGoNext =
+    currentCanProceed && !isLastQuestion && !isSubmitted;
+  const canGoPrev = currentIndex > 0;
+  const canGoReviewSubmit = currentCanProceed && isLastQuestion && !isSubmitted;
+
+  const showNavLock = (message: string) => {
+    setNavLockMessage(message);
+    window.setTimeout(() => setNavLockMessage(null), 3200);
+  };
+
+  const tryNavigateToIndex = (index: number) => {
+    if (index === currentIndex) return;
+    if (isSubmitted) {
+      setCurrentIndex(index);
+      return;
+    }
+    if (index > maxNavigableIndex) {
+      showNavLock("Answer or skip earlier questions before opening later ones.");
+      return;
+    }
+    if (index > currentIndex && !currentCanProceed) {
+      showNavLock("Select an answer or use Skip to continue.");
+      return;
+    }
+    setCurrentIndex(index);
+  };
+
+  const handleSelectOption = (questionId: string, optionCode: string) => {
+    if (isSubmitted) return;
+    setAnswersByQuestionId((prev) => ({ ...prev, [questionId]: optionCode }));
+    setSkippedQuestionIds((prev) => {
+      const next = new Set(prev);
+      next.delete(questionId);
+      return next;
+    });
+    setSaveNotice(null);
+    setNavLockMessage(null);
+  };
+
+  const handleSkipCurrentQuestion = () => {
+    if (!currentQuestion || isSubmitted || currentAnswered) return;
+
+    setSkippedQuestionIds((prev) => {
+      const next = new Set(prev);
+      next.add(currentQuestion.questionId);
+      return next;
+    });
+    setNavLockMessage(null);
+    toast.info("Question skipped — return anytime from the question map.", {
+      dedupeKey: "assessment-skip",
+      durationMs: 2200,
+    });
+
+    if (currentIndex < questions.length - 1) {
+      window.setTimeout(() => setCurrentIndex((i) => i + 1), 180);
+    }
+  };
+
+  const buildSavePayload = () =>
+    questions
+      .filter((q) => answersByQuestionId[q.questionId])
+      .map((q) => ({
+        questionId: q.questionId,
+        pillarId: q.pillarId,
+        selectedOptionCode: answersByQuestionId[q.questionId],
+        testStatus: "Complete" as const,
+      }));
+
+  const handleSaveAnswers = async () => {
+    if (!session || isSubmitted || saving) return;
+    const toSave = buildSavePayload();
+    if (toSave.length === 0) {
+      setSaveNotice("Answer at least one question before saving.");
+      return;
+    }
+    setSaving(true);
+    setSaveNotice(null);
+    try {
+      await assessmentService.saveAnswers(assessmentId, toSave);
+      saveAssessmentDraft(assessmentId, {
+        answers: answersByQuestionId,
+        skippedQuestionIds: Array.from(skippedQuestionIds),
+        currentIndex,
+      });
+      setSaveNotice(`Saved ${toSave.length} answer${toSave.length === 1 ? "" : "s"} to the server.`);
+      toast.success(`Saved ${toSave.length} answer${toSave.length === 1 ? "" : "s"} to the server.`, {
+        dedupeKey: "assessment-server-save",
+        durationMs: 2500,
+      });
+    } catch (err: unknown) {
+      setSaveNotice(getApiErrorMessage(err, "Failed to save answers."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sectionStats = (section: SectionGroup) => {
+    let answered = 0;
+    let skipped = 0;
+    for (const i of section.questionIndices) {
+      const q = questions[i];
+      if (answersByQuestionId[q.questionId]) answered++;
+      else if (skippedQuestionIds.has(q.questionId)) skipped++;
+    }
+    const total = section.questionIndices.length;
+    return { total, answered, skipped, remaining: total - answered - skipped };
+  };
+
+  if (loading) {
+    return <AssessmentWorkspaceSkeleton />;
+  }
+
+  if (error && !session) {
+    return (
+      <div className="max-w-2xl mx-auto p-8 bg-white rounded-xl border border-red-200 text-center space-y-4">
+        <AlertCircle className="h-8 w-8 text-red-500 mx-auto" />
+        <p className="text-sm text-slate-700">{error}</p>
+        <div className="flex justify-center gap-3">
+          <Link href="/assessments" className="text-sm font-semibold text-slate-600 hover:text-slate-900">
+            Back to assessments
+          </Link>
+          <button type="button" onClick={loadAssessment} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700">
+            <RefreshCw className="h-4 w-4" /> Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session || !currentQuestion) {
+    return null;
+  }
+
+  const selected = answersByQuestionId[currentQuestion.questionId];
+
+  return (
+    <div className="h-full min-h-0 flex flex-col gap-2.5 w-full max-w-[1600px] mx-auto">
+      {/* Compact chrome — fits one viewport with question + nav */}
+      <div className="shrink-0 glass-header rounded-2xl px-3 sm:px-4 py-2.5 space-y-2.5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Link
+              href="/assessments"
+              className="p-2 rounded-xl border border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50 transition shadow-2xs shrink-0"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-sm sm:text-base font-bold text-slate-900 font-editorial truncate">
+                  {frameworkTitle}
+                </h1>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-900 text-white">
+                  {session.assessmentType}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 truncate">
+                {companyLabel(session)} · v{session.frameworkVersion} · Q{currentIndex + 1}/
+                {questions.length}
+                {!isSubmitted && !currentCanProceed && (
+                  <span className="ml-1.5 inline-flex items-center gap-1 text-amber-700 font-medium">
+                    <Lock className="h-3 w-3" /> unlock next
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <div className="hidden md:flex flex-wrap gap-1.5 mr-1">
+              <StatPill label="Total" value={questions.length} tone="slate" />
+              <StatPill label="Done" value={answeredCount} tone="emerald" />
+              <StatPill label="Skip" value={skippedCount} tone="amber" />
+              <StatPill label="Left" value={remainingCount} tone="sky" />
+            </div>
+            <button
+              type="button"
+              onClick={loadAssessment}
+              className="px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-white inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            {!isSubmitted && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveAnswers}
+                  disabled={saving}
+                  className="px-2.5 py-1.5 text-xs font-semibold border border-slate-200 rounded-lg bg-white hover:bg-slate-50 inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  Save
+                </button>
+              </>
+            )}
+            {isSubmitted && (
+              <Link
+                href={`/assessments/${assessmentId}/results`}
+                className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg inline-flex items-center gap-1.5"
+              >
+                <FileCheck2 className="h-3.5 w-3.5" /> Results
+              </Link>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-700 ease-out",
+                progressPercent >= 100 ? "bg-emerald-500" : "assessment-progress-shimmer"
+              )}
+              style={{ width: `${Math.max(progressPercent, currentAnswered ? 4 : 2)}%` }}
+            />
+          </div>
+          <p className="text-xs font-bold text-slate-800 tabular-nums shrink-0 inline-flex items-center gap-1">
+            <ListChecks className="h-3.5 w-3.5 text-slate-500" />
+            <AnimatedNumber value={progressPercent} suffix="%" duration={700} />
+          </p>
+        </div>
+      </div>
+
+      {(error || navLockMessage || saveNotice) && (
+        <div className="shrink-0 space-y-1.5">
+          {error && (
+            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+          {navLockMessage && (
+            <div className="px-3 py-2 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2 animate-[assessment-slide-in_0.3s_ease-out]">
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              {navLockMessage}
+            </div>
+          )}
+          {saveNotice && (
+            <div
+              className={cn(
+                "px-3 py-2 rounded-lg text-xs font-medium border",
+                saveNotice.startsWith("Saved")
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  : "bg-slate-50 text-slate-700 border-slate-200"
+              )}
+            >
+              {saveNotice}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-2.5">
+        {/* Sidebar — sections */}
+        <aside className="lg:col-span-4 min-h-0 flex flex-col gap-2 order-2 lg:order-1">
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex-1 min-h-0 flex flex-col">
+            <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/80 shrink-0">
+              <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Pillars / sections
+              </h2>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Expand a pillar to jump to its questions
+              </p>
+            </div>
+            <ul className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1.5 [scrollbar-width:thin]">
+              {sections.map((section) => {
+                const stats = sectionStats(section);
+                const sectionComplete = stats.remaining === 0 && stats.skipped === 0;
+                const containsCurrent = section.questionIndices.includes(currentIndex);
+                const firstInSection = section.questionIndices[0];
+                const isSectionAccessible = isSubmitted || firstInSection <= maxNavigableIndex;
+                const expanded = expandedSectionKeys.has(section.key);
+
+                return (
+                  <li
+                    key={section.key}
+                    className={cn(
+                      "rounded-xl border transition-all",
+                      containsCurrent
+                        ? "border-blue-500/40 bg-blue-50/50 shadow-sm ring-1 ring-blue-500/10"
+                        : "border-slate-100 bg-white hover:border-slate-200",
+                      !isSectionAccessible && "opacity-60"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() => {
+                        if (!isSectionAccessible) {
+                          showNavLock("Complete earlier questions before opening this section.");
+                          return;
+                        }
+                        toggleSectionExpanded(section.key);
+                      }}
+                      className={cn(
+                        "w-full text-left px-3 py-2.5",
+                        !isSectionAccessible && "cursor-not-allowed"
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5 transition-transform duration-200",
+                            expanded && isSectionAccessible && "rotate-180 text-blue-600"
+                          )}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs font-semibold text-slate-800 line-clamp-2">
+                              {section.label}
+                            </span>
+                            {!isSectionAccessible ? (
+                              <Lock className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-0.5" />
+                            ) : sectionComplete ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            ) : null}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-medium text-slate-600">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100">
+                              {stats.total} total
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                              {stats.answered} done
+                            </span>
+                            {stats.skipped > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900">
+                                {stats.skipped} skipped
+                              </span>
+                            )}
+                            <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-900">
+                              {stats.remaining} left
+                            </span>
+                          </div>
+                          <div className="mt-2 h-1 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 transition-all duration-500"
+                              style={{
+                                width: `${stats.total ? (stats.answered / stats.total) * 100 : 0}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+
+                    {expanded && isSectionAccessible && (
+                      <ul className="px-2 pb-2 space-y-1 border-t border-slate-100/80 pt-1.5 mt-0.5">
+                        {section.questionIndices.map((qi) => {
+                          const q = questions[qi];
+                          const answered = Boolean(answersByQuestionId[q.questionId]);
+                          const skipped =
+                            skippedQuestionIds.has(q.questionId) && !answered;
+                          const locked = !isSubmitted && qi > maxNavigableIndex;
+                          const isCurrent = qi === currentIndex;
+                          return (
+                            <li key={q.questionId}>
+                              <button
+                                type="button"
+                                disabled={locked}
+                                onClick={() => tryNavigateToIndex(qi)}
+                                className={cn(
+                                  "w-full text-left rounded-lg px-2.5 py-2 transition-all border",
+                                  isCurrent
+                                    ? "border-blue-400 bg-white shadow-sm ring-1 ring-blue-500/15"
+                                    : "border-transparent hover:bg-white/80 hover:border-slate-100",
+                                  locked && "opacity-50 cursor-not-allowed"
+                                )}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <span
+                                    className={cn(
+                                      "mt-0.5 h-2 w-2 rounded-full shrink-0",
+                                      answered && "bg-emerald-500",
+                                      skipped && !answered && "bg-amber-400",
+                                      locked && !answered && !skipped && "bg-slate-200",
+                                      !answered &&
+                                        !skipped &&
+                                        !locked &&
+                                        "bg-slate-300"
+                                    )}
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-[10px] font-bold text-blue-700 tabular-nums">
+                                        Q{qi + 1}
+                                      </span>
+                                      <span className="text-[10px] font-medium text-slate-500">
+                                        {q.questionId}
+                                      </span>
+                                      {isCurrent && (
+                                        <span className="text-[9px] font-semibold uppercase tracking-wide text-blue-600">
+                                          Current
+                                        </span>
+                                      )}
+                                      {locked && (
+                                        <Lock className="h-3 w-3 text-slate-400" />
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-600 leading-snug line-clamp-2 mt-0.5">
+                                      {q.text}
+                                    </p>
+                                  </div>
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-2.5 shadow-xs shrink-0 max-h-[28%] overflow-y-auto [scrollbar-width:thin]">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 px-0.5">
+              Question map
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {questions.map((q, i) => {
+                const answered = Boolean(answersByQuestionId[q.questionId]);
+                const skipped = skippedQuestionIds.has(q.questionId) && !answered;
+                const locked = !isSubmitted && i > maxNavigableIndex;
+                const isCurrent = i === currentIndex;
+                return (
+                  <button
+                    key={q.questionId}
+                    type="button"
+                    title={locked ? "Locked" : q.questionId}
+                    onClick={() => tryNavigateToIndex(i)}
+                    className={cn(
+                      "h-7 w-7 rounded-md text-[10px] font-bold transition-all duration-200",
+                      isCurrent && "ring-2 ring-blue-500 ring-offset-1 scale-105",
+                      answered && "bg-emerald-500 text-white",
+                      skipped && !answered && "bg-amber-400 text-white",
+                      !answered &&
+                        !skipped &&
+                        !locked &&
+                        "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                      locked && "bg-slate-50 text-slate-300 cursor-not-allowed"
+                    )}
+                  >
+                    {locked ? <Lock className="h-3 w-3 mx-auto" /> : i + 1}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+
+        {/* Main question card — nav always visible without page scroll */}
+        <main className="lg:col-span-8 min-h-0 flex flex-col order-1 lg:order-2">
+          <article
+            key={currentIndex}
+            className="assessment-question-enter bg-white rounded-2xl border border-slate-200/90 shadow-md overflow-hidden flex-1 min-h-0 flex flex-col"
+          >
+            <div className="px-4 sm:px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white shrink-0">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-500">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-900 text-white">
+                  <Sparkles className="h-3 w-3" /> Q{currentIndex + 1}
+                </span>
+                <span>{currentQuestion.questionId}</span>
+                <span className="text-slate-300">·</span>
+                <span className="text-slate-600 normal-case">
+                  {currentQuestion.section || currentQuestion.pillarName}
+                </span>
+              </div>
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 mt-2 leading-snug">
+                {currentQuestion.text}
+              </h2>
+              {currentSkipped && (
+                <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5">
+                  <SkipForward className="h-3.5 w-3.5" /> Skipped — select an answer when ready
+                </p>
+              )}
+              {currentQuestion.helpText && (
+                <p className="text-[11px] text-slate-500 mt-1.5 line-clamp-2">
+                  {currentQuestion.helpText}
+                </p>
+              )}
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-4 [scrollbar-width:thin]">
+              <fieldset disabled={isSubmitted} className="space-y-2">
+                <legend className="sr-only">Choose one answer</legend>
+                {(currentQuestion.responseOptions || [])
+                  .slice()
+                  .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                  .map((opt) => {
+                    const checked = selected === opt.code;
+                    return (
+                      <label
+                        key={opt.code}
+                        className={cn(
+                          "flex items-start gap-3 p-3 sm:p-3.5 rounded-xl border-2 cursor-pointer transition-all duration-200",
+                          checked
+                            ? "border-blue-600 bg-blue-50/70 shadow-sm assessment-option-selected"
+                            : "border-slate-200 hover:border-blue-300 hover:bg-slate-50/80",
+                          isSubmitted && "cursor-default opacity-90"
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={`q-${currentQuestion.questionId}`}
+                          checked={checked}
+                          onChange={() =>
+                            handleSelectOption(currentQuestion.questionId, opt.code)
+                          }
+                          className="mt-1 accent-blue-600"
+                        />
+                        <span className="text-sm text-slate-800 leading-relaxed">{opt.label}</span>
+                      </label>
+                    );
+                  })}
+              </fieldset>
+            </div>
+
+            <div className="px-3.5 sm:px-5 py-2.5 border-t border-slate-100 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
+              <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                {!currentCanProceed && !isSubmitted ? (
+                  <>
+                    <CircleDashed className="h-3.5 w-3.5 text-amber-500" />
+                    Pick an option or <strong className="text-slate-700">Skip</strong>
+                  </>
+                ) : currentSkipped && !isLastQuestion ? (
+                  <>
+                    <SkipForward className="h-3.5 w-3.5 text-amber-600" />
+                    Skipped — use <strong className="text-slate-700">Next</strong>
+                  </>
+                ) : isLastQuestion && !isSubmitted ? (
+                  <>
+                    <ClipboardCheck className="h-3.5 w-3.5 text-teal-600" />
+                    Last question — open <strong className="text-slate-700">Review &amp; submit</strong>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    Ready to continue
+                  </>
+                )}
+              </p>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => tryNavigateToIndex(currentIndex - 1)}
+                  disabled={!canGoPrev}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-1"
+                >
+                  <ChevronLeft className="h-4 w-4" /> Previous
+                </button>
+                {!isSubmitted && !currentAnswered && (
+                  <button
+                    type="button"
+                    onClick={handleSkipCurrentQuestion}
+                    className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <SkipForward className="h-4 w-4" /> Skip
+                  </button>
+                )}
+                {isLastQuestion ? (
+                  isSubmitted ? (
+                    <Link
+                      href={`/assessments/${assessmentId}/results`}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-teal-600 text-white hover:bg-teal-700 inline-flex items-center gap-1.5 shadow-md"
+                    >
+                      <FileCheck2 className="h-4 w-4" /> Results
+                    </Link>
+                  ) : canGoReviewSubmit ? (
+                    <Link
+                      href={`/assessments/${assessmentId}/review`}
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-teal-600 to-blue-600 text-white hover:opacity-95 inline-flex items-center gap-1.5 shadow-md"
+                    >
+                      <ClipboardCheck className="h-4 w-4" /> Review &amp; submit
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="px-4 py-2 text-xs font-semibold rounded-xl bg-slate-200 text-slate-500 cursor-not-allowed inline-flex items-center gap-1.5"
+                    >
+                      <ClipboardCheck className="h-4 w-4" /> Review &amp; submit
+                    </button>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => tryNavigateToIndex(currentIndex + 1)}
+                    disabled={!canGoNext}
+                    className={cn(
+                      "px-4 py-2 text-xs font-semibold rounded-xl inline-flex items-center gap-1 transition-all",
+                      canGoNext
+                        ? "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+                        : "bg-slate-200 text-slate-500 cursor-not-allowed"
+                    )}
+                  >
+                    Next <ChevronRight className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </article>
+        </main>
+      </div>
+    </div>
+  );
+}

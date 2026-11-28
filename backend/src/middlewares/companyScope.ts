@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+﻿import { Request, Response, NextFunction } from "express";
 import { Types } from "mongoose";
 import { sendError } from "../utils/response.js";
 import { User } from "../models/User.js";
@@ -6,6 +6,7 @@ import { Company } from "../models/Company.js";
 import { TenantMembership } from "../models/TenantMembership.js";
 import { AuditorOrganization } from "../models/AuditorOrganization.js";
 import { IAssessmentSession } from "../models/AssessmentSession.js";
+import { isTenantAdminRole } from "./auth.js";
 
 /**
  * Returns all active tenant IDs that a user (TenantAdmin or Auditor) belongs to.
@@ -185,7 +186,7 @@ export async function isTenantAdminForSession(
   req: Request,
   session: IAssessmentSession
 ): Promise<boolean> {
-  if (req.user?.role !== "TenantAdmin") return false;
+  if (!req.user || !isTenantAdminRole(req.user.role)) return false;
 
   if (session.tenantId && req.user.tenantId) {
     return session.tenantId.toString() === req.user.tenantId.toString();
@@ -261,7 +262,7 @@ export function requireCompanyScope(paramName = "id") {
     }
 
     // Legacy fallback if company has no tenantId
-    if (req.user.role === "TenantAdmin") {
+    if (isTenantAdminRole(req.user.role)) {
       if (req.user.companyId && req.user.companyId.toString() === targetCompanyId.toString()) {
         return next();
       }

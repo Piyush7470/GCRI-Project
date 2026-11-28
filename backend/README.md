@@ -41,7 +41,95 @@ npm run dev
 ```
 The server will start on `http://localhost:5000`.
 
+### 2b. Client demo logins (Super Admin / Admin / Auditor)
+After deploy, seed or rotate credentials against your production MongoDB (requires `MONGODB_URI` in `.env`):
+
+```bash
+npm run seed:client-accounts
+```
+
+Shareable copy for clients: `CLIENT_DEMO_ACCESS.md` (passwords + MFA recovery codes).
+
 ### 3. Health Check
 ```bash
-curl http://localhost:5000/api/v1/health
+curl http://localhost:5001/api/v1/health
+```
+
+**If you see `Cannot GET /api/v1/dashboard/admin/analytics`:** the API process is running an old `dist/` (build failed or was not restarted). From `backend/` run `npm run build`, then `npm run dev` or `pm2 reload gcri-backend`. Use port **5001** if that is what `PORT` is in `.env`. The route requires a **Bearer token** (Super Admin or Admin); opening the URL in a browser without login returns `401`, not 404.
+
+**If PM2 logs show `Invalid CLOUDINARY_URL protocol` or the browser shows CORS on login:** remove or fix `CLOUDINARY_URL` in `backend/.env` — it must be `cloudinary://KEY:SECRET@CLOUD_NAME`, or delete that line and keep only `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`. Then `npm run build` and `pm2 restart gcri-backend --update-env`.
+
+**Production CORS:** set `CORS_ORIGIN=https://gcrai-fe.vercel.app` (comma-separate multiple origins). The API also allows that Vercel URL by default.
+
+### 4. SMTP (transactional email)
+Copy SMTP variables from `.env.example` (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `CLIENT_BASE_URL`). Set `CLIENT_BASE_URL` to your deployed frontend (e.g. `https://gcri-project.vercel.app`) so invite, password-reset, and assessment email buttons do not point at `localhost:3000`. On startup, logs should show `[EmailService] SMTP configured` and `Email link base (frontend): …`.
+
+**Verify in the app:**
+
+| Flow | URL / action |
+|------|----------------|
+| Forgot password | Frontend `/forgot-password` → inbox link `/reset-password?token=...` |
+| User invite | Admin → Users → Invite → `/accept-invite?token=...` |
+| Admin reset password | Admin → Users → reset → email to user |
+| MFA enabled | Security settings → enable MFA → security alert email |
+
+### 5. Assessment reports (PDF & Excel)
+From **Assessments → open session → Results** (`/assessments/:id/results`), use **Download PDF report** or **Download Excel workbook**.
+
+- PDF includes GCRAI / GRAICE logos, executive summary, KPIs, findings, remediation, and per-control detail (`GET /api/v1/assessments/:id/report` generates on demand if needed).
+- Excel mirrors the same dataset in styled sheets (`GET /api/v1/assessments/:id/export`).
+
+### 6. Dashboard analytics export
+On `/dashboard`, use **Export report** → PDF or Excel (Super Admin, Admin, Assessor).
+
+- `GET /api/v1/dashboard/admin/analytics/export?format=pdf|xlsx&range=30d&companyId=optional`
+- `GET /api/v1/dashboard/auditor/analytics/export?format=pdf|xlsx&range=30d`
+
+## Production (EC2 + PM2)
+
+`dist/` is not in git. On the server you must install dependencies and compile before PM2 can start.
+
+```bash
+cd /var/www/GCRI-Project/backend
+git pull origin main
+npm ci
+npm run build
+test -f dist/index.js && echo "Build OK"
+
+pm2 delete gcri-backend 2>/dev/null || true
+pm2 start ecosystem.config.cjs
+pm2 save
+curl -s http://127.0.0.1:${PORT:-5090}/api/v1/health
+```
+
+Set `PORT=5090` (or your chosen port) in `.env` on the server.
+
+## GitHub Actions (CI/CD)
+
+Workflow: `.github/workflows/deploy-backend.yml` — runs on push to `main` when `backend/**` changes.
+
+Trigger a deploy by pushing any commit that touches files under `backend/`.
+
+<!-- ci: deploy test -->
+
+**Repository → Settings → Secrets and variables → Actions → New repository secret:**
+
+| Secret | Example |
+|--------|---------|
+| `EC2_HOST` | `72.61.255.51` or `backend.shivanshu.shop` |
+| `EC2_USER` | `ubuntu` or `root` (match your SSH login) |
+| `EC2_SSH_KEY` | Full contents of your `.pem` private key |
+
+**One-time on EC2:** clone repo to `/var/www/GCRI-Project`, create `backend/.env`, run first manual `npm ci && npm run build && pm2 start ecosystem.config.cjs`.
+
+**Private repo:** on EC2, use a [deploy key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys) or HTTPS with a PAT so `git pull` works without prompts.
+
+**Manual deploy (same as the workflow):**
+
+```bash
+ssh ubuntu@YOUR_EC2_IP
+cd /var/www/GCRI-Project && git pull origin main
+cd backend && npm ci && npm run build
+pm2 restart gcri-backend || pm2 start ecosystem.config.cjs
+pm2 save
 ```
