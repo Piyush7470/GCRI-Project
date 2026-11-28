@@ -879,6 +879,11 @@ export function AnalyticsDashboard({
                         : card.key === "compliance"
                           ? "compliance"
                           : "risks";
+              const subtitle = kpiCardSubtitle(
+                card.label,
+                card.kpi.hint,
+                `vs prior ${range}`
+              );
               return (
                 <Link
                   key={card.key}
@@ -887,7 +892,7 @@ export function AnalyticsDashboard({
                     isSuperAdmin: Boolean(isSuperAdmin),
                   })}
                   className={cn(
-                    "block rounded-2xl border-2 border-slate-300 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-500 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
+                    "flex h-full flex-col rounded-2xl border-2 border-slate-300 bg-white p-3.5 shadow-xs text-left transition hover:border-teal-500 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40",
                     card.kpi.outlier && "border-rose-400 shadow-[0_0_0_1px_rgba(244,63,94,0.12)]"
                   )}
                 >
@@ -904,20 +909,12 @@ export function AnalyticsDashboard({
                     {card.kpi.value}
                     {card.kpi.suffix || ""}
                   </p>
-                  {(() => {
-                    const subtitle = kpiCardSubtitle(
-                      card.label,
-                      card.kpi.hint,
-                      `vs prior ${range}`
-                    );
-                    if (!subtitle) return null;
-                    return (
-                      <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 font-medium">
-                        {subtitle}
-                      </p>
-                    );
-                  })()}
-                  <p className="text-[10px] font-bold text-teal-700 mt-1.5">Open module →</p>
+                  <div className="mt-1 min-h-[2.25rem] flex-1">
+                    {subtitle ? (
+                      <p className="text-[10px] text-slate-600 line-clamp-2 font-medium">{subtitle}</p>
+                    ) : null}
+                  </div>
+                  <p className="text-[10px] font-bold text-teal-700 pt-1.5 leading-none">Open module →</p>
                 </Link>
               );
             })}
