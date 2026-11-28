@@ -69,8 +69,22 @@ async function buildDashboardAdminFilters(req: Request): Promise<DashboardAdminF
     };
   }
 
-  if (role === "TenantAdmin" && req.user.tenantId) {
-    const tenantId = new Types.ObjectId(req.user.tenantId);
+  if (role === "TenantAdmin") {
+    let tenantIdStr = req.user.tenantId;
+    if (!tenantIdStr) {
+      const membership = await TenantMembership.findOne({
+        userId: req.user.userId,
+        role: "TenantAdmin",
+        status: "Active",
+      })
+        .select("tenantId")
+        .lean();
+      tenantIdStr = membership?.tenantId?.toString();
+    }
+    if (!tenantIdStr) {
+      return null;
+    }
+    const tenantId = new Types.ObjectId(tenantIdStr);
     const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
     const tenantCompanyIds = tenantCompanies.map((c) => c._id);
 

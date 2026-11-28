@@ -8,7 +8,6 @@ import {
   buildAuditorAssessmentsQuery,
   AuditorPipelineFilter,
 } from "@/services/dashboard.service";
-import { companyService } from "@/services/company.service";
 import { StatCard } from "@/components/shared/StatCard";
 import { DashboardPageSkeleton } from "@/components/shared/PageSkeletons";
 import { ListPagination } from "@/components/shared/ListPagination";
@@ -73,7 +72,7 @@ import {
 /* -------------------------------------------------------------------------- */
 
 export default function DashboardPage() {
-  const { user, isSuperAdmin, isAdmin } = useAuth();
+  const { user, isSuperAdmin, isAdmin, loading: authLoading } = useAuth();
   const {
     setOrganizations,
     refreshTrigger,
@@ -151,12 +150,8 @@ export default function DashboardPage() {
         const assessPromise = isSuperAdmin
           ? Promise.resolve({ data: { assessments: [] } })
           : dashboardService.getAdminAssessments({ limit: 100 });
-        const compPromise =
-          isSuperAdmin
-            ? selectedOrgFilter !== "all"
-              ? dashboardService.getAdminScopeOrganizations({ limit: 200 })
-              : Promise.resolve({ data: [] })
-            : companyService.getCompanies({ limit: 200 });
+        // Never use GET /companies on the dashboard — SuperAdmin gets 403 there.
+        const compPromise = dashboardService.getAdminScopeOrganizations({ limit: 200 });
         const [sumResult, assessResult, compResult, analyticsResult] = await Promise.allSettled([
           dashboardService.getAdminSummary(),
           assessPromise,
@@ -219,8 +214,6 @@ export default function DashboardPage() {
 
         if (compResult.status === "fulfilled" && Array.isArray(compResult.value?.data)) {
           scopeOrgs = compResult.value.data.map((c: any) => mapScopeOrg(c));
-        } else if (compResult.status === "rejected") {
-          partialErrors.push(getUserFacingApiError(compResult.reason, "organization directory"));
         }
 
         if (
@@ -246,6 +239,12 @@ export default function DashboardPage() {
               activePlan: o.activePlan,
               status: o.status,
             })
+          );
+        }
+
+        if (scopeOrgs.length === 0 && compResult.status === "rejected") {
+          partialErrors.push(
+            getUserFacingApiError(compResult.reason, "organization directory")
           );
         }
 
@@ -345,9 +344,10 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    fetchDashboard();
+    if (authLoading || !user) return;
+    void fetchDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roleView, refreshTrigger, analyticsRange, selectedOrgFilter]);
+  }, [authLoading, user, roleView, refreshTrigger, analyticsRange, selectedOrgFilter]);
 
   const handleAnalyticsRangeChange = (range: AnalyticsRange) => {
     setAnalyticsRange(range);

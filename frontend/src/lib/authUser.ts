@@ -1,6 +1,13 @@
 import { User } from "@/types/auth.types";
 
 /** Maps login/OAuth API user payloads to the frontend User shape. */
+function normalizeRoleForClient(role: unknown): User["role"] {
+  const s = String(role ?? "").trim();
+  if (s === "Super Admin" || s === "SuperAdmin") return "SuperAdmin";
+  if (s === "Tenant Admin" || s === "TenantAdmin") return "TenantAdmin";
+  return role as User["role"];
+}
+
 export function normalizeLoginUser(raw: Record<string, unknown> | null | undefined): User | null {
   if (!raw || typeof raw !== "object") return null;
 
@@ -21,7 +28,7 @@ export function normalizeLoginUser(raw: Record<string, unknown> | null | undefin
     id: String(id),
     name: String(raw.name ?? ""),
     email: String(raw.email ?? ""),
-    role: raw.role as User["role"],
+    role: normalizeRoleForClient(raw.role),
     status: (raw.status as User["status"]) ?? "Active",
     mfa: {
       enabled: mfaEnabled,
@@ -72,6 +79,9 @@ export function getUserFacingApiError(err: unknown, contextLabel: string): strin
 
   if (status === 401 || code === "UNAUTHORIZED" || code === "INVALID_TOKEN") {
     return "Your session has expired or is invalid. Please sign in again.";
+  }
+  if (code === "SUPER_ADMIN_TENANT_DATA_RESTRICTED") {
+    return "This view is not available in platform mode. Use the dashboard scope selector or tenant workspace.";
   }
   if (
     status === 403 ||
