@@ -1008,7 +1008,7 @@ export default function AdminAssessorsPage() {
       {/* ============================================================== */}
       {inviteModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-visible animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="h-8 w-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
@@ -1205,7 +1205,7 @@ export default function AdminAssessorsPage() {
       {/* ============================================================== */}
       {directAddModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-visible animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="h-8 w-8 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
@@ -1341,7 +1341,7 @@ export default function AdminAssessorsPage() {
       {/* ============================================================== */}
       {editModalOpen && editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-visible animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="h-8 w-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
@@ -1464,7 +1464,7 @@ export default function AdminAssessorsPage() {
       {/* ============================================================== */}
       {resetModalOpen && resetTargetUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full overflow-visible animate-in fade-in zoom-in-95 duration-150">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="h-8 w-8 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center">
