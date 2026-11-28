@@ -35,6 +35,8 @@ type AsyncSearchSelectProps = {
   className?: string;
   compact?: boolean;
   emptyValue?: string;
+  /** Dropdown panel is at least this wide (portal); useful for compact header triggers. */
+  panelMinWidth?: number;
 };
 
 const DEFAULT_PAGE_SIZE = 8;
@@ -79,6 +81,7 @@ export function AsyncSearchSelect({
   className = "",
   compact = false,
   emptyValue = "",
+  panelMinWidth,
 }: AsyncSearchSelectProps) {
   const autoId = useId();
   const controlId = idProp ?? autoId;
@@ -118,13 +121,18 @@ export function AsyncSearchSelect({
       Math.max(120, openBelow ? spaceBelow - 4 : spaceAbove - 4)
     );
     const top = openBelow ? rect.bottom + 4 : Math.max(margin, rect.top - maxHeight - 4);
+    const width = Math.max(rect.width, panelMinWidth ?? 0);
+    let left = rect.left;
+    if (left + width > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - margin - width);
+    }
     setPanelPos({
       top,
-      left: rect.left,
-      width: rect.width,
+      left,
+      width,
       maxHeight,
     });
-  }, []);
+  }, [panelMinWidth]);
 
   useEffect(() => {
     staticOptions?.forEach((o) => labelMapRef.current.set(o.value, o.label));

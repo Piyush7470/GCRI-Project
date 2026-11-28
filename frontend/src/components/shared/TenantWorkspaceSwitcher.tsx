@@ -38,21 +38,23 @@ export function TenantWorkspaceSwitcher() {
 
   return (
     <div
-      className="hidden md:flex items-center gap-1.5 min-w-0 max-w-[9.5rem] sm:max-w-[11rem] lg:max-w-[13.5rem] xl:max-w-[16rem] shrink"
+      className="hidden md:flex items-center gap-1.5 shrink-0 w-[11.5rem] sm:w-48 md:w-52 lg:w-56"
       title="Active tenant workspace"
     >
       <Layers className="h-4 w-4 text-teal-600 shrink-0" aria-hidden />
       <AsyncSearchSelect
         compact
-        className="min-w-0 w-full"
+        className="min-w-0 flex-1"
         value={activeTenantId ?? ""}
         onChange={(v) => setActiveTenantId(v || null)}
         disabled={loading}
         staticOptions={tenantOptions}
+        placeholder="Select workspace…"
         searchPlaceholder="Search workspaces…"
         allowCustom={false}
         emptyValue=""
-        pageSize={8}
+        pageSize={10}
+        panelMinWidth={288}
       />
       {platformMode && isSuperAdmin && (
         <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/50 px-1.5 py-0.5 rounded border border-teal-200 dark:border-teal-800 shrink-0">
