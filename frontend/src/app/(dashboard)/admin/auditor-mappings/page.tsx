@@ -314,7 +314,7 @@ export default function AuditorMappingsPage() {
             className="inline-flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-teal-500 via-cyan-600 to-blue-600 hover:opacity-95 text-white font-medium text-xs sm:text-sm rounded-lg shadow-sm transition"
           >
             <Plus className="h-4 w-4" />
-            + New Assignment
+            New Assignment
           </button>
         </div>
       </div>
@@ -496,7 +496,7 @@ export default function AuditorMappingsPage() {
                       <p className="text-xs text-slate-400 max-w-sm text-center">
                         {search || statusFilter !== "All" || selectedOrgFilter !== "all" || selectedAuditorFilter !== "all"
                           ? "Try adjusting your search queries or filter selections."
-                          : "Click '+ New Assignment' above to map your first certified assessor to an organization."}
+                          : "Click “New Assignment” above to map your first certified assessor to an organization."}
                       </p>
                     </div>
                   </td>
