@@ -47,6 +47,15 @@ import { MetricListModal, MetricListRow } from "@/components/shared/MetricListMo
 import { userService } from "@/services/user.service";
 
 const RANGES: AnalyticsRange[] = ["30d", "90d", "6m", "1y"];
+
+/** Drop subtitle when it only repeats the card title (case-insensitive). */
+function kpiCardSubtitle(label: string, hint?: string, fallback?: string): string {
+  const text = (hint || fallback || "").trim();
+  if (!text) return "";
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  if (norm(text) === norm(label)) return "";
+  return text;
+}
 const STATUS_COLORS = ["#10b981", "#3b82f6", "#94a3b8"];
 const RISK_COLORS = ["#e11d48", "#f97316", "#eab308", "#22c55e"];
 const PLAN_COLORS = ["#b45309", "#64748b", "#ca8a04"];
@@ -500,7 +509,7 @@ export function AnalyticsDashboard({
               : data.kpis.totalAuditors.value,
             hint: isAuditor
               ? `${scopedAuditorCount} assessor${scopedAuditorCount === 1 ? "" : "s"} in scope`
-              : data.kpis.totalAuditors.hint || "Accredited assessors",
+              : data.kpis.totalAuditors.hint || "Assessor & Auditor platform accounts",
           },
           icon: UserCheck,
           theme: "bg-emerald-50 text-emerald-700",
@@ -515,7 +524,7 @@ export function AnalyticsDashboard({
               : data.kpis.totalOrganizations.value,
             hint: isAuditor
               ? `${scopedOrgCount} assigned organization${scopedOrgCount === 1 ? "" : "s"}`
-              : data.kpis.totalOrganizations.hint || "Client organizations",
+              : data.kpis.totalOrganizations.hint || `${scopedOrgCount} in scope`,
           },
           icon: Building2,
           theme: "bg-indigo-50 text-indigo-700",
@@ -895,9 +904,19 @@ export function AnalyticsDashboard({
                     {card.kpi.value}
                     {card.kpi.suffix || ""}
                   </p>
-                  <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 font-medium">
-                    {card.kpi.hint || `vs prior ${range}`}
-                  </p>
+                  {(() => {
+                    const subtitle = kpiCardSubtitle(
+                      card.label,
+                      card.kpi.hint,
+                      `vs prior ${range}`
+                    );
+                    if (!subtitle) return null;
+                    return (
+                      <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 font-medium">
+                        {subtitle}
+                      </p>
+                    );
+                  })()}
                   <p className="text-[10px] font-bold text-teal-700 mt-1.5">Open module →</p>
                 </Link>
               );
