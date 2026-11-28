@@ -1636,6 +1636,8 @@ function AuditorDashboardContent({
                   onPrevious={findingsPagination.goPrev}
                   onNext={findingsPagination.goNext}
                   itemLabel="findings"
+                  pageSize={findingsPagination.pageSize}
+                  onPageSizeChange={findingsPagination.setPageSize}
                 />
               </div>
             ) : (
@@ -1824,6 +1826,8 @@ function AuditorDashboardContent({
                 onPrevious={orgsPagination.goPrev}
                 onNext={orgsPagination.goNext}
                 itemLabel="organizations"
+                pageSize={orgsPagination.pageSize}
+                onPageSizeChange={orgsPagination.setPageSize}
               />
               </>
             ) : (
@@ -1979,6 +1983,8 @@ function AuditorDashboardContent({
               onNext={pipelinePagination.goNext}
               itemLabel="assessments"
               disabled={assessmentsLoading}
+              pageSize={pipelinePagination.pageSize}
+              onPageSizeChange={pipelinePagination.setPageSize}
             />
             </>
           ) : (
@@ -3011,6 +3017,8 @@ function AdminDashboardContent({
                 onPrevious={recentOrgsPagination.goPrev}
                 onNext={recentOrgsPagination.goNext}
                 itemLabel="organizations"
+                pageSize={recentOrgsPagination.pageSize}
+                onPageSizeChange={recentOrgsPagination.setPageSize}
               />
               </>
             ) : (
@@ -3179,6 +3187,8 @@ function AdminDashboardContent({
               onPrevious={adminAssessmentsPagination.goPrev}
               onNext={adminAssessmentsPagination.goNext}
               itemLabel="assessments"
+              pageSize={adminAssessmentsPagination.pageSize}
+              onPageSizeChange={adminAssessmentsPagination.setPageSize}
             />
             </>
           ) : (

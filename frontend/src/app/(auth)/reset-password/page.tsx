@@ -4,6 +4,7 @@ import React, { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { authService } from "@/services/auth.service";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 function ResetPasswordContent() {
   const router = useRouter();
@@ -67,29 +68,26 @@ function ResetPasswordContent() {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
-            <input
-              type="password"
-              required
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="••••••••"
-            />
-          </div>
+          <PasswordInput
+            label="New Password"
+            value={newPassword}
+            onChange={setNewPassword}
+            required
+            minLength={8}
+            size="md"
+            autoComplete="new-password"
+          />
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Confirm New Password</label>
-            <input
-              type="password"
-              required
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="••••••••"
-            />
-          </div>
+          <PasswordInput
+            label="Confirm New Password"
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            required
+            minLength={8}
+            size="md"
+            showStrength={false}
+            autoComplete="new-password"
+          />
 
           <button
             type="submit"

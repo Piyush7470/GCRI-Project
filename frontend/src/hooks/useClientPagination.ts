@@ -1,13 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { clampListPageSize, DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 
-export const DEFAULT_PAGE_SIZE = 10;
+export { DEFAULT_LIST_PAGE_SIZE as DEFAULT_PAGE_SIZE };
 
-export function useClientPagination<T>(items: T[], pageSize: number = DEFAULT_PAGE_SIZE) {
+export function useClientPagination<T>(
+  items: T[],
+  initialPageSize: number = DEFAULT_LIST_PAGE_SIZE
+) {
+  const [pageSize, setPageSizeState] = useState(() => clampListPageSize(initialPageSize));
   const [page, setPage] = useState(1);
   const total = items.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+
+  const setPageSize = useCallback((size: number) => {
+    setPageSizeState(clampListPageSize(size));
+    setPage(1);
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -29,6 +39,7 @@ export function useClientPagination<T>(items: T[], pageSize: number = DEFAULT_PA
     page,
     setPage,
     pageSize,
+    setPageSize,
     total,
     totalPages,
     pageItems,

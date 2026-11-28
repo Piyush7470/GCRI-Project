@@ -426,6 +426,8 @@ export default function ApiKeysPage() {
               onNext={keysPagination.goNext}
               itemLabel="API keys"
               disabled={loading}
+              pageSize={keysPagination.pageSize}
+              onPageSizeChange={keysPagination.setPageSize}
             />
             </>
           )}

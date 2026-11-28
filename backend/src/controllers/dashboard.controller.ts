@@ -288,7 +288,9 @@ export async function getAdminScopeOrganizations(req: Request, res: Response, ne
       );
     }
 
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string, 10) || 100));
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
+    const skip = (page - 1) * limit;
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
 
     const filter: Record<string, unknown> = { ...scope.orgFilter };
@@ -298,11 +300,15 @@ export async function getAdminScopeOrganizations(req: Request, res: Response, ne
       filter.$or = [{ name: regex }, { domain: regex }, { industry: regex }];
     }
 
-    const companies = await Company.find(filter)
-      .select("name domain industry status activePlan logo")
-      .sort({ name: 1 })
-      .limit(limit)
-      .lean();
+    const [companies, total] = await Promise.all([
+      Company.find(filter)
+        .select("name domain industry status activePlan logo")
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Company.countDocuments(filter),
+    ]);
 
     const payload = companies.map((c) => ({
       _id: String(c._id),
@@ -317,7 +323,14 @@ export async function getAdminScopeOrganizations(req: Request, res: Response, ne
           : null,
     }));
 
-    return sendSuccess(res, payload);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return sendSuccess(res, payload, 200, {
+      page,
+      limit,
+      total,
+      totalPages,
+    });
   } catch (err) {
     next(err);
   }

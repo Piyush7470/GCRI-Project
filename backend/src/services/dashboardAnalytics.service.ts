@@ -279,6 +279,10 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
   const usersDelta = pctDelta(totalUsers, prevUsers);
   const auditorsDelta = pctDelta(totalAuditors, prevAuditors);
   const orgsDelta = pctDelta(totalOrganizations, prevOrganizations);
+  const orgsOnboardedInPeriod = orgsCreatedAll.filter(
+    (c) => c.createdAt && new Date(c.createdAt) >= periodStart
+  ).length;
+  const activeOrganizations = companies.filter((c) => c.status === "Active").length;
   const assessmentsDelta = pctDelta(totalAssessments, prevAssessments);
   const complianceDelta = pctDelta(complianceScore, prevCompliance || complianceScore);
 
@@ -781,12 +785,15 @@ export async function buildDashboardAnalytics(scope: DashboardAnalyticsScope) {
       totalAuditors: {
         value: totalAuditors,
         deltaPct: auditorsDelta,
-        hint: "Accredited assessors",
+        hint: "Assessor & Auditor platform accounts",
       },
       totalOrganizations: {
         value: totalOrganizations,
         deltaPct: orgsDelta,
-        hint: "Client organizations",
+        hint:
+          orgsOnboardedInPeriod > 0
+            ? `${orgsOnboardedInPeriod} onboarded in period`
+            : `${activeOrganizations} active in directory`,
       },
       totalAssessments: {
         value: totalAssessments,

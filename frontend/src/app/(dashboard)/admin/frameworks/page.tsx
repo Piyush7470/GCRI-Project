@@ -454,6 +454,8 @@ export default function AdminFrameworksPage() {
               onNext={frameworksPagination.goNext}
               itemLabel="frameworks"
               className="border-t-0"
+              pageSize={frameworksPagination.pageSize}
+              onPageSizeChange={frameworksPagination.setPageSize}
             />
           </div>
         </div>

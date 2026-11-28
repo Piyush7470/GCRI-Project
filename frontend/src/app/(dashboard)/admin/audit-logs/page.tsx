@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { auditLogService } from "@/services/auditLog.service";
 import { DataTableSkeleton } from "@/components/shared/PageSkeletons";
 import { ListPagination } from "@/components/shared/ListPagination";
+import { DEFAULT_LIST_PAGE_SIZE } from "@/lib/listPagination";
 import { AuditLogEntry, AuditLogStats } from "@/types/auditLog.types";
 import {
   History,
@@ -26,7 +27,6 @@ import { loadAuditActionOptions, loadAuditEntityOptions } from "@/lib/searchSele
 
 type TilePreset = "all24h" | "denials" | "all" | "topAction";
 
-const PAGE_SIZE = 20;
 
 function iso24hAgo() {
   return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -40,9 +40,10 @@ export default function AdminAuditLogsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(DEFAULT_LIST_PAGE_SIZE);
   const [paginationMeta, setPaginationMeta] = useState({
     page: 1,
-    limit: PAGE_SIZE,
+    limit: DEFAULT_LIST_PAGE_SIZE,
     total: 0,
     totalPages: 1,
   });
@@ -74,7 +75,7 @@ export default function AdminAuditLogsPage() {
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           page,
-          limit: PAGE_SIZE,
+          limit,
         }),
         auditLogService.getAuditLogStats(),
       ]);
@@ -87,14 +88,14 @@ export default function AdminAuditLogsPage() {
       if (p) {
         setPaginationMeta({
           page: p.page || page,
-          limit: p.limit || PAGE_SIZE,
+          limit: p.limit || limit,
           total: p.total ?? logList.length,
-          totalPages: p.pages || Math.max(1, Math.ceil((p.total ?? logList.length) / PAGE_SIZE)),
+          totalPages: p.pages || Math.max(1, Math.ceil((p.total ?? logList.length) / limit)),
         });
       } else {
         setPaginationMeta({
           page,
-          limit: PAGE_SIZE,
+          limit,
           total: logList.length,
           totalPages: 1,
         });
@@ -104,7 +105,7 @@ export default function AdminAuditLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [entityFilter, actionFilter, debouncedSearch, startDate, endDate, page]);
+  }, [entityFilter, actionFilter, debouncedSearch, startDate, endDate, page, limit]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -451,6 +452,11 @@ export default function AdminAuditLogsPage() {
               onNext={() => setPage((p) => Math.min(paginationMeta.totalPages, p + 1))}
               itemLabel="audit events"
               disabled={loading}
+              pageSize={limit}
+              onPageSizeChange={(size) => {
+                setLimit(size);
+                setPage(1);
+              }}
             />
           </>
         ) : (
