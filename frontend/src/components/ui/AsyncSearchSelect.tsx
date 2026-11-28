@@ -1,6 +1,15 @@
 "use client";
 
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { Check, ChevronDown, Loader2, Search } from "lucide-react";
 
 export type SearchSelectOption = { value: string; label: string };
@@ -29,6 +38,8 @@ type AsyncSearchSelectProps = {
 };
 
 const DEFAULT_PAGE_SIZE = 8;
+const PANEL_Z_INDEX = 10000;
+const PANEL_SEARCH_HEADER_PX = 52;
 
 function paginateStatic(
   options: SearchSelectOption[],
@@ -72,6 +83,7 @@ export function AsyncSearchSelect({
   const autoId = useId();
   const controlId = idProp ?? autoId;
   const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const labelMapRef = useRef<Map<string, string>>(new Map());
@@ -85,6 +97,34 @@ export function AsyncSearchSelect({
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [panelPos, setPanelPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const updatePanelPosition = useCallback(() => {
+    const trigger = containerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const margin = 8;
+    const preferredMax = 272;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const openBelow = spaceBelow >= 140 || spaceBelow >= spaceAbove;
+    const maxHeight = Math.min(
+      preferredMax,
+      Math.max(120, openBelow ? spaceBelow - 4 : spaceAbove - 4)
+    );
+    const top = openBelow ? rect.bottom + 4 : Math.max(margin, rect.top - maxHeight - 4);
+    setPanelPos({
+      top,
+      left: rect.left,
+      width: rect.width,
+      maxHeight,
+    });
+  }, []);
 
   useEffect(() => {
     staticOptions?.forEach((o) => labelMapRef.current.set(o.value, o.label));
@@ -144,12 +184,27 @@ export function AsyncSearchSelect({
     void fetchPage(1, false, debouncedSearch);
   }, [open, debouncedSearch, fetchPage]);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelPos(null);
+      return;
+    }
+    updatePanelPosition();
+    window.addEventListener("resize", updatePanelPosition);
+    window.addEventListener("scroll", updatePanelPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePanelPosition);
+      window.removeEventListener("scroll", updatePanelPosition, true);
+    };
+  }, [open, updatePanelPosition, items.length, loading]);
+
   useEffect(() => {
     if (!open) return;
     function onDocMouse(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener("mousedown", onDocMouse);
     const t = setTimeout(() => searchRef.current?.focus(), 40);
@@ -208,81 +263,98 @@ export function AsyncSearchSelect({
         />
       </button>
 
-      {open && (
-        <div className="absolute z-[60] left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-          <div className="p-2 border-b border-slate-100">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-              <input
-                ref={searchRef}
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={searchPlaceholder}
-                className="w-full pl-8 pr-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
-              />
-            </div>
-          </div>
-
+      {open &&
+        panelPos &&
+        typeof document !== "undefined" &&
+        createPortal(
           <div
-            ref={listRef}
-            onScroll={handleScroll}
-            className="max-h-[17rem] overflow-y-auto py-1 [scrollbar-width:thin]"
+            ref={panelRef}
+            role="listbox"
+            style={{
+              position: "fixed",
+              top: panelPos.top,
+              left: panelPos.left,
+              width: panelPos.width,
+              maxHeight: panelPos.maxHeight,
+              zIndex: PANEL_Z_INDEX,
+            }}
+            className="bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-100 flex flex-col"
           >
-            {showCustom && (
-              <button
-                type="button"
-                onClick={() => {
-                  onChange(customTerm);
-                  labelMapRef.current.set(customTerm, customTerm);
-                  setOpen(false);
-                  setSearch("");
-                }}
-                className="w-full text-left px-3 py-2 text-xs text-teal-800 hover:bg-teal-50 border-b border-slate-50"
-              >
-                Use &ldquo;{customTerm}&rdquo;
-              </button>
-            )}
-            {loading && items.length === 0 ? (
-              <div className="flex items-center justify-center gap-2 py-6 text-xs text-slate-500">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading…
+            <div className="p-2 border-b border-slate-100 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="w-full pl-8 pr-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 focus:border-teal-500"
+                />
               </div>
-            ) : loadError ? (
-              <p className="px-3 py-4 text-xs text-rose-600">{loadError}</p>
-            ) : items.length === 0 ? (
-              <p className="px-3 py-4 text-xs text-slate-500">No matches.</p>
-            ) : (
-              items.map((item, idx) => {
-                const selected = value === item.value;
-                return (
-                  <button
-                    key={`${idx}-${item.value}`}
-                    type="button"
-                    onClick={() => {
-                      onChange(item.value);
-                      labelMapRef.current.set(item.value, item.label);
-                      setOpen(false);
-                      setSearch("");
-                    }}
-                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left hover:bg-slate-50 ${
-                      selected ? "bg-teal-50/80 text-teal-900 font-medium" : "text-slate-800"
-                    }`}
-                  >
-                    <span className="truncate">{item.label}</span>
-                    {selected ? <Check className="h-3.5 w-3.5 text-teal-600 shrink-0" /> : null}
-                  </button>
-                );
-              })
-            )}
-            {loadingMore && (
-              <div className="flex justify-center py-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+            </div>
+
+            <div
+              ref={listRef}
+              onScroll={handleScroll}
+              className="flex-1 min-h-0 overflow-y-auto py-1 [scrollbar-width:thin]"
+              style={{ maxHeight: Math.max(80, panelPos.maxHeight - PANEL_SEARCH_HEADER_PX) }}
+            >
+              {showCustom && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(customTerm);
+                    labelMapRef.current.set(customTerm, customTerm);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs text-teal-800 hover:bg-teal-50 border-b border-slate-50"
+                >
+                  Use &ldquo;{customTerm}&rdquo;
+                </button>
+              )}
+              {loading && items.length === 0 ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-xs text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading…
+                </div>
+              ) : loadError ? (
+                <p className="px-3 py-4 text-xs text-rose-600">{loadError}</p>
+              ) : items.length === 0 ? (
+                <p className="px-3 py-4 text-xs text-slate-500">No matches.</p>
+              ) : (
+                items.map((item, idx) => {
+                  const selected = value === item.value;
+                  return (
+                    <button
+                      key={`${idx}-${item.value}`}
+                      type="button"
+                      onClick={() => {
+                        onChange(item.value);
+                        labelMapRef.current.set(item.value, item.label);
+                        setOpen(false);
+                        setSearch("");
+                      }}
+                      className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left hover:bg-slate-50 ${
+                        selected ? "bg-teal-50/80 text-teal-900 font-medium" : "text-slate-800"
+                      }`}
+                    >
+                      <span className="truncate">{item.label}</span>
+                      {selected ? <Check className="h-3.5 w-3.5 text-teal-600 shrink-0" /> : null}
+                    </button>
+                  );
+                })
+              )}
+              {loadingMore && (
+                <div className="flex justify-center py-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
