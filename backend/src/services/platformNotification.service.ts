@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { AuditLog } from "../models/AuditLog.js";
 import { Company } from "../models/Company.js";
+import { normalizeUserRole } from "../middlewares/auth.js";
 
 export type NotificationCategory = "security" | "platform" | "all";
 export type NotificationSeverity = "critical" | "high" | "medium" | "info";
@@ -59,6 +60,7 @@ export async function buildPlatformNotifications(options: {
   userId: string;
   role?: string;
   tenantId?: string;
+  companyId?: string;
   category?: NotificationCategory;
   search?: string;
   limit?: number;
@@ -81,18 +83,32 @@ export async function buildPlatformNotifications(options: {
     timestamp: { $gte: since },
   };
 
-  if (options.role === "SuperAdmin") {
+  const role = normalizeUserRole(options.role);
+
+  if (role === "SuperAdmin") {
     // Platform-wide feed (same visibility as audit trail explorer for Super Admin).
-  } else if (options.role === "TenantAdmin" && options.tenantId) {
-    const tenantId = new Types.ObjectId(options.tenantId);
-    const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
-    const companyIds = tenantCompanies.map((c) => String(c._id));
-    const tenantScope: Record<string, unknown>[] = [
-      { actorId: options.userId },
-      ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
-    ];
-    filter.$and = [{ $or: tenantScope }];
-  } else if (options.role === "Auditor") {
+  } else if (role === "TenantAdmin") {
+    if (options.tenantId) {
+      const tenantId = new Types.ObjectId(options.tenantId);
+      const tenantCompanies = await Company.find({ tenantId }).select("_id").lean();
+      const companyIds = tenantCompanies.map((c) => String(c._id));
+      const tenantScope: Record<string, unknown>[] = [
+        { actorId: options.userId },
+        ...(companyIds.length ? [{ "after.companyId": { $in: companyIds } }] : []),
+      ];
+      filter.$and = [{ $or: tenantScope }];
+    } else if (options.companyId) {
+      filter.$and = [
+        {
+          $or: [{ actorId: options.userId }, { "after.companyId": options.companyId }],
+        },
+      ];
+    } else {
+      filter.actorId = options.userId;
+    }
+  } else if (role === "Auditor") {
+    filter.actorId = options.userId;
+  } else {
     filter.actorId = options.userId;
   }
 

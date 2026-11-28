@@ -21,6 +21,7 @@ export async function getPlatformNotifications(req: Request, res: Response, next
       userId: req.user!.userId,
       role: req.user?.role,
       tenantId: req.user?.tenantId,
+      companyId: req.user?.companyId,
       category,
       search,
       limit,
