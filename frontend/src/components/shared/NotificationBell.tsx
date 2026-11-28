@@ -72,6 +72,24 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
     return () => clearTimeout(t);
   }, [search]);
 
+  /** Unread badge uses this feed — loaded without opening the panel. */
+  const [badgeItems, setBadgeItems] = useState<PlatformNotificationItem[]>([]);
+
+  const fetchBadgeFeed = useCallback(async () => {
+    try {
+      const res = await notificationService.getNotifications({
+        category: "all",
+        limit: 50,
+        hours: 24 * 7,
+      });
+      const payload = res?.data;
+      if (payload?.items) setBadgeItems(payload.items);
+      if (payload?.summary) setSummary(payload.summary);
+    } catch {
+      /* badge prefetch — keep prior count on transient errors */
+    }
+  }, []);
+
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -86,6 +104,9 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
       if (payload) {
         setItems(payload.items || []);
         setSummary(payload.summary || { total: 0, security: 0, platform: 0, critical: 0, high: 0 });
+        if (category === "all" && !debouncedSearch) {
+          setBadgeItems(payload.items || []);
+        }
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not load notifications.");
@@ -94,6 +115,12 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
       setLoading(false);
     }
   }, [category, debouncedSearch]);
+
+  useEffect(() => {
+    void fetchBadgeFeed();
+    const interval = setInterval(() => void fetchBadgeFeed(), 60_000);
+    return () => clearInterval(interval);
+  }, [fetchBadgeFeed]);
 
   useEffect(() => {
     if (!open) return;
@@ -117,8 +144,8 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
   }, [open]);
 
   const unreadCount = useMemo(
-    () => items.filter((n) => !readIds.has(n.id)).length,
-    [items, readIds]
+    () => badgeItems.filter((n) => !readIds.has(n.id)).length,
+    [badgeItems, readIds]
   );
 
   const markRead = (id: string) => {
@@ -133,6 +160,7 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
   const markAllRead = () => {
     setReadIds((prev) => {
       const next = new Set(prev);
+      badgeItems.forEach((n) => next.add(n.id));
       items.forEach((n) => next.add(n.id));
       saveReadIds(next);
       return next;
