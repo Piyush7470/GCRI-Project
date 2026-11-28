@@ -864,7 +864,7 @@ export function AnalyticsDashboard({
 
       {data && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 items-stretch">
             {kpiCards.map((card) => {
               const Icon = card.icon;
               const modalKey =

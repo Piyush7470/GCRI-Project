@@ -9,13 +9,18 @@ import {
   NotificationCategory,
   PlatformNotificationItem,
 } from "@/services/notification.service";
+import { useAuth } from "@/context/AuthContext";
 
 const READ_STORAGE_KEY = "graice_read_notification_ids";
 
-function loadReadIds(): Set<string> {
+function readStorageKey(userId?: string | null) {
+  return userId ? `${READ_STORAGE_KEY}:${userId}` : READ_STORAGE_KEY;
+}
+
+function loadReadIds(userId?: string | null): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const raw = localStorage.getItem(READ_STORAGE_KEY);
+    const raw = localStorage.getItem(readStorageKey(userId));
     if (!raw) return new Set();
     const parsed = JSON.parse(raw);
     return new Set(Array.isArray(parsed) ? parsed : []);
@@ -24,8 +29,9 @@ function loadReadIds(): Set<string> {
   }
 }
 
-function saveReadIds(ids: Set<string>) {
-  localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(Array.from(ids).slice(-500)));
+function saveReadIds(ids: Set<string>, userId?: string | null) {
+  if (!userId) return;
+  localStorage.setItem(readStorageKey(userId), JSON.stringify(Array.from(ids).slice(-500)));
 }
 
 function severityDot(severity: PlatformNotificationItem["severity"]) {
@@ -46,6 +52,8 @@ function formatWhen(iso: string) {
 }
 
 export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
+  const { user, loading: authLoading } = useAuth();
+  const userId = user?._id ?? null;
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState<NotificationCategory>("all");
   const [search, setSearch] = useState("");
@@ -64,8 +72,13 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setReadIds(loadReadIds());
-  }, []);
+    if (!userId) {
+      setReadIds(new Set());
+      setBadgeItems([]);
+      return;
+    }
+    setReadIds(loadReadIds(userId));
+  }, [userId]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 280);
@@ -117,10 +130,11 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
   }, [category, debouncedSearch]);
 
   useEffect(() => {
+    if (authLoading || !userId) return;
     void fetchBadgeFeed();
     const interval = setInterval(() => void fetchBadgeFeed(), 60_000);
     return () => clearInterval(interval);
-  }, [fetchBadgeFeed]);
+  }, [fetchBadgeFeed, authLoading, userId]);
 
   useEffect(() => {
     if (!open) return;
@@ -152,7 +166,7 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
     setReadIds((prev) => {
       const next = new Set(prev);
       next.add(id);
-      saveReadIds(next);
+      saveReadIds(next, userId);
       return next;
     });
   };
@@ -162,7 +176,7 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
       const next = new Set(prev);
       badgeItems.forEach((n) => next.add(n.id));
       items.forEach((n) => next.add(n.id));
-      saveReadIds(next);
+      saveReadIds(next, userId);
       return next;
     });
   };
@@ -305,17 +319,15 @@ export function NotificationBell({ isAdmin }: { isAdmin: boolean }) {
             )}
           </div>
 
-          {isAdmin && (
-            <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80">
-              <Link
-                href="/admin/audit-logs"
-                onClick={() => setOpen(false)}
-                className="block text-center text-[11px] font-semibold text-blue-600 hover:text-blue-800"
-              >
-                Open full audit trail →
-              </Link>
-            </div>
-          )}
+          <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80">
+            <Link
+              href={isAdmin ? "/admin/audit-logs" : "/assessments"}
+              onClick={() => setOpen(false)}
+              className="block text-center text-[11px] font-semibold text-blue-600 hover:text-blue-800"
+            >
+              {isAdmin ? "Open full audit trail →" : "Open assessments →"}
+            </Link>
+          </div>
         </div>
       )}
     </div>
