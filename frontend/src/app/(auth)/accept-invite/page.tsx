@@ -6,6 +6,7 @@ import Link from "next/link";
 import { userService } from "@/services/user.service";
 import { useAuth } from "@/context/AuthContext";
 import { getApiErrorMessage, normalizeLoginUser } from "@/lib/authUser";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 function AcceptInviteContent() {
   const router = useRouter();
@@ -97,29 +98,26 @@ function AcceptInviteContent() {
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Create Password</label>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Minimum 8 characters"
-          />
-        </div>
+        <PasswordInput
+          label="Create Password"
+          value={password}
+          onChange={setPassword}
+          required
+          minLength={8}
+          size="md"
+          autoComplete="new-password"
+        />
 
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Confirm Password</label>
-          <input
-            type="password"
-            required
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Repeat password"
-          />
-        </div>
+        <PasswordInput
+          label="Confirm Password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          required
+          minLength={8}
+          size="md"
+          showStrength={false}
+          autoComplete="new-password"
+        />
 
         <button
           type="submit"

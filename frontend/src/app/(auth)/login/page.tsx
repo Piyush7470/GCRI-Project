@@ -12,7 +12,7 @@ import {
   normalizeLoginUser,
 } from "@/lib/authUser";
 import { storage } from "@/lib/storage";
-import { Eye, EyeOff } from "lucide-react";
+import { PasswordInput } from "@/components/shared/PasswordInput";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +22,6 @@ export default function LoginPage() {
   const [mfaToken, setMfaToken] = useState("");
   const [showMfa, setShowMfa] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mfaInputRef = useRef<HTMLInputElement>(null);
 
@@ -119,32 +118,23 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="block text-sm font-semibold text-slate-700">Password</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-sm font-semibold text-slate-700">Password</span>
             <Link href="/forgot-password" className="text-xs text-blue-600 hover:underline">
               Forgot password?
             </Link>
           </div>
-          <div className="relative">
-            <input
-              type={showPassword ? "text" : "password"}
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2.5 pr-10 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/80 focus:border-blue-400 bg-white"
-              placeholder="••••••••"
-              autoComplete="current-password"
-              suppressHydrationWarning
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((prev) => !prev)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
-              aria-label={showPassword ? "Hide password" : "Show password"}
-            >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
+          <PasswordInput
+            value={password}
+            onChange={setPassword}
+            required
+            showStrength={false}
+            showRequirementsInfo={false}
+            autoComplete="current-password"
+            placeholder="Enter your password"
+            size="md"
+            label={undefined}
+          />
         </div>
 
         {showMfa && (

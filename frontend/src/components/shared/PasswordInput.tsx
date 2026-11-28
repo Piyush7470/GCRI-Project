@@ -24,6 +24,9 @@ type PasswordInputProps = {
   showRequirementsInfo?: boolean;
   className?: string;
   autoComplete?: string;
+  /** Larger fields for login / public auth screens */
+  size?: "sm" | "md";
+  inputClassName?: string;
 };
 
 export function PasswordInput({
@@ -39,6 +42,8 @@ export function PasswordInput({
   showRequirementsInfo = true,
   className = "",
   autoComplete = "new-password",
+  size = "sm",
+  inputClassName = "",
 }: PasswordInputProps) {
   const autoId = useId();
   const id = idProp ?? autoId;
@@ -99,16 +104,29 @@ export function PasswordInput({
           minLength={minLength}
           disabled={disabled}
           autoComplete={autoComplete}
-          className="w-full text-xs py-2 pl-3 pr-9 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition"
+          suppressHydrationWarning
+          className={
+            size === "md"
+              ? `w-full px-3 py-2.5 pl-3 pr-11 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/80 focus:border-blue-400 bg-white transition ${inputClassName}`
+              : `w-full text-xs py-2 pl-3 pr-9 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition ${inputClassName}`
+          }
         />
         <button
           type="button"
           onClick={() => setVisible((v) => !v)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 rounded-md"
+          className={
+            size === "md"
+              ? "absolute right-2 top-1/2 -translate-y-1/2 z-10 p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition focus:outline-none focus:ring-2 focus:ring-blue-500/80"
+              : "absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1 text-slate-400 hover:text-slate-600 rounded-md"
+          }
           aria-label={visible ? "Hide password" : "Show password"}
-          tabIndex={-1}
+          aria-pressed={visible}
         >
-          {visible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {visible ? (
+            <EyeOff className={size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} />
+          ) : (
+            <Eye className={size === "md" ? "h-4 w-4" : "h-3.5 w-3.5"} />
+          )}
         </button>
       </div>
       {showStrength && value.length > 0 && (
