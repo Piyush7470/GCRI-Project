@@ -305,7 +305,7 @@ export default function AdminFrameworksPage() {
             className="inline-flex items-center gap-2 px-4 py-2 bg-[#0c162c] hover:bg-slate-800 text-white font-semibold text-xs rounded-lg shadow-sm transition"
           >
             <Plus className="h-4 w-4" />
-            + New Framework Draft
+            New Framework Draft
           </button>
         </div>
       </div>
@@ -655,7 +655,7 @@ export default function AdminFrameworksPage() {
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#0c162c] hover:bg-slate-800 text-white font-semibold text-xs rounded-lg transition"
                       >
                         <Plus className="h-3.5 w-3.5" />
-                        {showAddControl ? "Cancel Add" : "+ Add New Control"}
+                        {showAddControl ? "Cancel Add" : "Add New Control"}
                       </button>
                     )}
                   </div>
